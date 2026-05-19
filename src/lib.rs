@@ -73,21 +73,6 @@ pub struct Board {
 }
 
 #[near(serializers = [json, borsh])]
-#[derive(Clone, Debug)]
-
-pub struct TickSnapshot {
-    pub tick: u32,
-    pub board_a: Vec<Unit>,
-    pub a_health: i32,
-    pub a_shield: u32,
-    pub a_fire: u32,
-
-    pub board_b: Vec<Unit>,
-    pub b_health: i32,
-    pub b_shield: u32,
-    pub b_fire: u32,
-}
-#[near(serializers = [json, borsh])]
 #[derive(Debug, PartialEq, Clone)]
 pub enum BattleStatus {
     InProgress,
@@ -117,6 +102,29 @@ pub struct Battle {
 pub struct CommitEntry {
     pub commitment: Vec<u8>, // sha256(secret)
     pub revealed_seed: Option<u64>,
+}
+
+#[near(serializers = [json, borsh])]
+pub struct AbilityEvent {
+    pub tick: u32,
+    pub attacker: u8, // def_id
+    pub ability: Ability,
+    pub target: Option<u8>, // def_id of target for stun
+    pub side: bool,         // true = board_a fired, false = board_b fired
+    pub value: u32,         // damage dealt, hp healed, etc.
+}
+
+#[near(serializers = [json, borsh])]
+pub struct TickSummary {
+    pub tick: u32,
+    pub events: Vec<AbilityEvent>,
+    // end state after this tick resolves
+    pub a_health: i32,
+    pub a_shield: u32,
+    pub a_fire: u32,
+    pub b_health: i32,
+    pub b_shield: u32,
+    pub b_fire: u32,
 }
 
 #[near(contract_state)]
@@ -420,25 +428,24 @@ impl GameContract {
         );
 
         const MAX_TICKS: u32 = 200; // gas safety cap
-        let mut log: Vec<TickSnapshot> = Vec::new();
+        let mut log: Vec<TickSummary> = Vec::new();
 
         loop {
             // Snapshot state before this tick fires
-            log.push(TickSnapshot {
+
+            let events = self.execute_tick(&mut battle);
+
+            log.push(TickSummary {
                 tick: battle.tick,
-                board_a: battle.board_a.units.clone(),
+                events,
                 a_health: battle.a_health,
                 a_shield: battle.a_shield,
                 a_fire: battle.a_fire,
-
                 b_health: battle.b_health,
                 b_shield: battle.b_shield,
                 b_fire: battle.b_fire,
-
-                board_b: battle.board_b.units.clone(),
             });
-
-            self.execute_tick(&mut battle);
+            
             battle.tick += 1;
 
             if battle.tick > MAX_TICKS {
@@ -470,16 +477,13 @@ impl GameContract {
 
     // -----------------------------------------------------------------------
     // Internal: one tick of combat
-    //
-    // Each alive unit counts down its cooldown.
-    // When it hits 0 it attacks the lowest-HP living enemy and resets.
-    // Both sides are processed simultaneously (snapshot approach avoids
-    // order-of-attack bias — units that die this tick can't counter-attack).
-    // -----------------------------------------------------------------------
 
-    fn execute_tick(&mut self, battle: &mut Battle) {
-        // Collect attacks before applying damage (simultaneous resolution)
+    fn execute_tick(&mut self, battle: &mut Battle) -> Vec<AbilityEvent> {
+        let mut events: Vec<AbilityEvent> = Vec::new();
 
+        // Apply damage 1 at a time, stun does not check at this point
+
+        // Does side a then b, swapping attacker and defender
         for side in [true, false] {
             let (
                 attacker_units,
@@ -516,7 +520,11 @@ impl GameContract {
 
             for unit in attacker_units.iter_mut() {
                 if unit.cooldown_remaining > 0 {
-                    unit.cooldown_remaining -= 1;
+                    if unit.stunned > 0 {
+                        unit.stunned -= 1;
+                    } else {
+                        unit.cooldown_remaining -= 1;
+                    }
                 } else {
                     let abilities = self.get_unit_abilities(unit.def_id);
                     for ability in abilities {
@@ -529,10 +537,52 @@ impl GameContract {
                                 if lifesteal {
                                     *atk_health += amount as i32;
                                 }
+
+                                // LOGGING
+                                events.push(AbilityEvent {
+                                    tick: battle.tick,
+                                    attacker: unit.def_id,
+                                    ability: Ability::Damage { amount, lifesteal },
+                                    target: None,
+                                    side,
+                                    value: remaining, // actual damage after shield
+                                });
                             }
-                            Ability::Heal { amount } => *atk_health += amount as i32,
-                            Ability::Shield { amount } => *atk_shield += amount,
-                            Ability::FireDot { amount } => *def_fire += amount,
+                            Ability::Heal { amount } => {
+                                *atk_health += amount as i32;
+
+                                events.push(AbilityEvent {
+                                    tick: battle.tick,
+                                    attacker: unit.def_id,
+                                    ability: Ability::Heal { amount },
+                                    target: None,
+                                    side,
+                                    value: amount,
+                                });
+                            }
+                            Ability::Shield { amount } => {
+                                *atk_shield += amount;
+
+                                events.push(AbilityEvent {
+                                    tick: battle.tick,
+                                    attacker: unit.def_id,
+                                    ability: Ability::Shield { amount },
+                                    target: None,
+                                    side,
+                                    value: amount,
+                                });
+                            }
+                            Ability::FireDot { amount } => {
+                                *def_fire += amount;
+                                events.push(AbilityEvent {
+                                    tick: battle.tick,
+                                    attacker: unit.def_id,
+                                    ability: Ability::FireDot { amount },
+                                    target: None,
+                                    side,
+                                    value: amount,
+                                });
+                            }
                             Ability::Stun {
                                 duration,
                                 amount_of_targets,
@@ -541,9 +591,31 @@ impl GameContract {
                                     let i = (battle.tick as usize + target as usize) % 32;
                                     let random_number = battle.random_seed[i] % 3;
                                     def_units[random_number as usize].stunned += duration;
+
+                                    events.push(AbilityEvent {
+                                        tick: battle.tick,
+                                        attacker: unit.def_id,
+                                        ability: Ability::Stun {
+                                            duration,
+                                            amount_of_targets,
+                                        },
+                                        target: Some(target),
+                                        side,
+                                        value: duration,
+                                    });
                                 }
                             }
-                            Ability::Cleanse => *atk_fire = 0,
+                            Ability::Cleanse => {
+                                *atk_fire = 0;
+                                events.push(AbilityEvent {
+                                    tick: battle.tick,
+                                    attacker: unit.def_id,
+                                    ability: Ability::Cleanse {},
+                                    target: None,
+                                    side,
+                                    value: 0,
+                                });
+                            }
                             Ability::None => {}
                         }
                     }
@@ -551,7 +623,7 @@ impl GameContract {
                 }
             }
             // remove fire and deal damage
-            if battle.tick / 2 == 0 {
+            if battle.tick % 2 == 0 {
                 let absorbed = (*def_shield).min(*def_fire);
                 *def_shield -= absorbed;
                 let remaining = *def_fire - absorbed;
@@ -559,6 +631,7 @@ impl GameContract {
                 *def_fire = def_fire.saturating_sub(1);
             }
         }
+        events
     }
 
     // -----------------------------------------------------------------------
@@ -625,7 +698,7 @@ mod tests {
 
         // Player B locks board — triggers battle creation
         testing_env!(get_context(accounts(1)).build());
-        contract.lock_board(vec![3, 4, 5]);
+        contract.lock_board(vec![2, 6, 6]);
 
         let battle_id = format!("{}:{}", accounts(1), accounts(0));
         let result = contract.resolve_battle(battle_id);
