@@ -4,17 +4,19 @@ use near_sdk::{
     AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise, env, near, near_bindgen,
 };
 
-#[near_bindgen]
-impl BoardRegistry {
-    pub fn register_board(&mut self, chosen_ids: Vec<u8>) {
-        let player = env::predecessor_account_id();
-        // ...validate chosen_ids against roster...
-        self.boards.insert(&player.to_string(), &chosen_ids);
-        env::log_str(&format!("Board registered for {}", player));
-    }
+// Player signs up and gets a random number. "registering"
 
-    pub fn get_board(&self, player: AccountId) -> Vec<u8> {
-        self.boards.get(&player.to_string())
-            .unwrap_or_else(|| env::panic_str("Player has no registered board"))
-    }
-}
+// Then player gets to roll a shop based on there number 
+
+// Then the player locks in the shop from what is available 
+// This sets them as ready to play
+
+
+//# cross contract
+// Allow battle contract to get the current players board so the battle can play
+
+// # extra: 
+// Function for a player to reset the random number and get a new shop
+// Function for admin to add units to the shop and remove units. 
+
+
