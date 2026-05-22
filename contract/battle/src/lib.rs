@@ -123,7 +123,7 @@ impl GameContract {
         // Join waits for both to complete before firing the callback
         let _ = fetch_a.and(fetch_b).and(roster).then(
             Self::ext(env::current_account_id())
-                .with_static_gas(Gas::from_tgas(10))
+                .with_static_gas(Gas::from_tgas(100))
                 .on_boards_loaded(battle_id),
         );
     }
@@ -179,23 +179,9 @@ impl GameContract {
         self.resolve_battle(battle_id);
     }
 
-    fn build_board(&self, unit_ids: Vec<u8>, roster: &Vec<UnitDef>) -> Vec<Unit> {
-        unit_ids
-            .iter()
-            .filter_map(|id| roster.iter().find(|u| u.id == *id))
-            .cloned().map(|def| Unit::from_def(&def))
-            .collect()
-    }
 
-    // -----------------------------------------------------------------------
-    // Phase 4 — Resolve battle
-    //
-    // Runs all ticks in a single transaction.
-    // Emits a BattleLog JSON event with every tick snapshot so the
-    // frontend can animate the fight step by step.
-    // -----------------------------------------------------------------------
-
-    pub fn resolve_battle(&mut self, battle_id: String) -> String {
+    // Runs battle in loop till winner 
+    fn resolve_battle(&mut self, battle_id: String) -> String {
         let mut battle = self
             .battles
             .get(&battle_id)
@@ -231,17 +217,18 @@ impl GameContract {
 
             if battle.tick > MAX_TICKS {
                 let val = battle.tick as i32 % 2_i32;
-                // alternate end damage
-                battle.a_health -= 2_i32.pow(battle.tick - MAX_TICKS) + (val);
-                battle.b_health -= 2_i32.pow(battle.tick - MAX_TICKS) + (val ^ 1);
+                // 2 damage per tick past the limit, alternating +1 between sides
+                battle.a_health -= 2 + (val);
+                battle.b_health -= 2 + (val ^ 1);
             }
 
             if battle.a_health <= 0 || battle.b_health <= 0 {
                 if battle.a_health >= battle.b_health {
                     //  a wins ?? ?
-                    battle.status = BattleStatus::PlayerAWins;
-                } else {
                     battle.status = BattleStatus::PlayerBWins;
+                } else {
+                    battle.status = BattleStatus::PlayerAWins;
+
                 }
                 break;
             }
@@ -412,7 +399,17 @@ impl GameContract {
                 *def_fire = def_fire.saturating_sub(1);
             }
         }
+        battle.random_seed = env::sha256(&battle.random_seed);
         events
     }
 
+    
+    // Helper function that builds units from defintions
+    fn build_board(&self, unit_ids: Vec<u8>, roster: &Vec<UnitDef>) -> Vec<Unit> {
+        unit_ids
+            .iter()
+            .filter_map(|id| roster.iter().find(|u| u.id == *id))
+            .cloned().map(|def| Unit::from_def(&def))
+            .collect()
+    }
 }
