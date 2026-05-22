@@ -186,14 +186,15 @@ impl BoardRegistry {
         let mut state = PlayerState::new();
         state.seed = Some(env::random_seed());
 
-        self.players.insert(key, state.clone());
-        env::log_str(&format!("{} committed a seed", player));
-
         // Roll the shop also as seed is ==== to shop
 
-        state.shop_offer = Some(Self::roll_shop(&state.seed.unwrap(), &self.roster, 5));
-
+        state.shop_offer = Some(Self::roll_shop(&state.seed.clone().unwrap(), &self.roster, 5));
         state.status = PlayerStatus::HasShop;
+
+        self.players.insert(key, state);
+        env::log_str(&format!("{} committed a seed", player));
+
+        
     }
 
     // View shop data
@@ -279,25 +280,19 @@ impl BoardRegistry {
 
     // Helper function for rolling shop
     fn roll_shop(seed: &Vec<u8>, roster: &Vec<UnitDef>, amount: usize) -> Vec<u8> {
-        assert!(roster.len() >= amount, "Not enough units in roster");
+        let enabled_roster: Vec<&UnitDef> = roster.iter().filter(|u| u.enabled).collect(); // only use enabled
+        assert!(enabled_roster.len() >= amount, "Not enough enabled units");
 
-        let mut indices: Vec<usize> = (0..roster.len()).collect();
+        let mut indices: Vec<usize> = (0..enabled_roster.len()).collect();
         let mut results = Vec::new();
 
         for i in 0..amount {
-            // Use seed byte i to pick from the REMAINING indices
             let remaining = indices.len();
             let pick = seed[i % seed.len()] as usize % remaining;
-
-            // Grab the unit ID at that position
-            results.push(roster[indices[pick]].id.clone());
-
-            // Swap picked index to the end and shrink the pool
-            // so it can't be picked again
+            results.push(enabled_roster[indices[pick]].id);
             indices.swap(pick, remaining - 1);
             indices.pop();
         }
-
         results
     }
 
