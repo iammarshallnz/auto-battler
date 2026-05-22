@@ -25,7 +25,7 @@ use crate::structs::*;
 pub struct BoardRegistry {
     pub admin: AccountId,
     pub players: LookupMap<String, PlayerState>,
-    pub ready_players: Vec<AccountId>, 
+    pub ready_players: Vec<AccountId>,
     pub roster: Vec<UnitDef>,
     pub battle_contract: AccountId, // only this contract can call set_player_in_battle
 }
@@ -188,13 +188,15 @@ impl BoardRegistry {
 
         // Roll the shop also as seed is ==== to shop
 
-        state.shop_offer = Some(Self::roll_shop(&state.seed.clone().unwrap(), &self.roster, 5));
+        state.shop_offer = Some(Self::roll_shop(
+            &state.seed.clone().unwrap(),
+            &self.roster,
+            5,
+        ));
         state.status = PlayerStatus::HasShop;
 
         self.players.insert(key, state);
         env::log_str(&format!("{} committed a seed", player));
-
-        
     }
 
     // View shop data
@@ -255,7 +257,6 @@ impl BoardRegistry {
         state.status = PlayerStatus::Ready;
         self.ready_players.push(player.clone()); // add to vec of player ready
 
-
         self.players.insert(key, state);
         env::log_str(&format!("{} locked their board — Ready", player));
     }
@@ -277,7 +278,6 @@ impl BoardRegistry {
         env::panic_str("No board found");
     }
 
-
     // Helper function for rolling shop
     fn roll_shop(seed: &Vec<u8>, roster: &Vec<UnitDef>, amount: usize) -> Vec<u8> {
         let enabled_roster: Vec<&UnitDef> = roster.iter().filter(|u| u.enabled).collect(); // only use enabled
@@ -294,6 +294,80 @@ impl BoardRegistry {
             indices.pop();
         }
         results
+    }
+
+    pub fn set_player_at_bazaar(&mut self, player: AccountId, won: bool) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.battle_contract,
+            "Battle contract only"
+        );
+
+        let key = player.to_string();
+        let mut state = self
+            .players
+            .get(&key)
+            .unwrap_or_else(|| env::panic_str("Player not found"))
+            .clone();
+
+        // Generate 3 upgrade offers using a fresh seed
+        let seed = env::random_seed();
+        let offers = self.roll_upgrades(&seed, &state.board.clone().unwrap());
+
+        state.bazaar_offers = Some(offers);
+        state.status = PlayerStatus::AtBazaar;
+        self.players.insert(key, state);
+    }
+
+    pub fn pick_upgrade(&mut self, offer_index: usize) {
+        let player = env::predecessor_account_id();
+        let key = player.to_string();
+
+        let mut state = self
+            .players
+            .get(&key)
+            .unwrap_or_else(|| env::panic_str("Player not found"))
+            .clone();
+
+        assert_eq!(state.status, PlayerStatus::AtBazaar, "Not at bazaar");
+
+        let offers = state
+            .bazaar_offers
+            .clone()
+            .unwrap_or_else(|| env::panic_str("No offers found"));
+
+        assert!(offer_index < offers.len(), "Invalid offer index");
+
+        // Apply the chosen upgrade to their board
+        let upgrade = &offers[offer_index];
+
+        // store upgrades separately so the battle contract can apply them
+        state.upgrades.push(upgrade.clone());
+        state.bazaar_offers = None;
+        state.status = PlayerStatus::Ready;
+
+        self.players.insert(key, state);
+        env::log_str(&format!("{} picked an upgrade", player));
+    }
+
+    // Reset
+    pub fn reset_player(&mut self) {
+        let player = env::predecessor_account_id();
+        let key = player.to_string();
+
+        let state = self
+            .players
+            .get(&key)
+            .unwrap_or_else(|| env::panic_str("Player not registered"));
+
+        assert_eq!(
+            state.status,
+            PlayerStatus::Ready,
+            "Can only reset after board prepared"
+        );
+
+        self.players.insert(key, PlayerState::new());
+        env::log_str(&format!("{} reset their state", player));
     }
 
     // Admin functions
@@ -325,7 +399,26 @@ impl BoardRegistry {
                 return;
             }
         }
-    }   
+    }
+
+    // Other functions
+
+    fn roll_upgrades(&self, seed: &Vec<u8>, board: &Vec<u8>) -> Vec<UnitUpgrade> {
+        // One upgrade offer per unit on their board, pick 3
+        let mut offers = Vec::new();
+        for (i, &unit_id) in board.iter().enumerate() {
+            let byte = seed[i % 32] % 3;
+            let upgrade = match byte {
+                0 => UpgradeType::BonusDamage { amount: 3 },
+                1 => UpgradeType::BonusCooldown { reduction: 1 },
+                _ => UpgradeType::ExtraAbility {
+                    ability: Ability::Shield { amount: 5 },
+                },
+            };
+            offers.push(UnitUpgrade { unit_id, upgrade });
+        }
+        offers
+    }
 
     pub fn get_ready_players(&self) -> Vec<AccountId> {
         self.ready_players.to_vec()
@@ -334,4 +427,15 @@ impl BoardRegistry {
     pub fn get_roster(&self) -> Vec<UnitDef> {
         self.roster.clone()
     }
+
+    pub fn get_bazaar_offers(&self, player: AccountId) -> Vec<UnitUpgrade> {
+        let state = self.players.get(&player.to_string())
+            .unwrap_or_else(|| env::panic_str("Player not registered"));
+
+        assert_eq!(state.status, PlayerStatus::AtBazaar, "Player is not at the bazaar");
+
+        state.bazaar_offers.clone()
+            .unwrap_or_else(|| env::panic_str("No offers found"))
+    }
+   
 }

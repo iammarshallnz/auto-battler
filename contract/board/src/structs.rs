@@ -63,6 +63,21 @@ impl Unit {
         }
     }
 }
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct UnitUpgrade {
+    pub unit_id: u8,
+    pub upgrade: UpgradeType,
+}
+
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub enum UpgradeType {
+    BonusDamage { amount: u32 },
+    BonusCooldown { reduction: u32 }, // faster attacks
+    ExtraAbility { ability: Ability },
+    Evolve { into_id: u8 },           // transform into a stronger unit
+}
 
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug, PartialEq)]
@@ -70,6 +85,7 @@ pub enum PlayerStatus {
     Unregistered,
     HasShop, // shop offer generated, board not yet locked
     Ready,   // board locked, waiting for battle contract to pick them up
+    AtBazaar,
 }
 #[derive(Clone, Debug)]
 #[near(serializers = [borsh])]
@@ -78,6 +94,9 @@ pub struct PlayerState {
     pub seed: Option<Vec<u8>>,       // derived after reveal
     pub shop_offer: Option<Vec<u8>>, // unit IDs offered to this player
     pub board: Option<Vec<u8>>,      // locked unit IDs
+    pub bazaar_offers: Option<Vec<UnitUpgrade>>,
+    pub upgrades: Vec<UnitUpgrade>, // persists across battles
+    pub player_life: u8,
 }
 
 impl PlayerState {
@@ -87,6 +106,9 @@ impl PlayerState {
             seed: None,
             shop_offer: None,
             board: None,
+            bazaar_offers: None,
+            upgrades: Vec::new(),
+            player_life: 10
         }
     }
 }
