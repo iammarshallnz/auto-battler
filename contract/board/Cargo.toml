@@ -1,5 +1,5 @@
 [package]
-name = "auto-battler"
+name = "board_setup"
 description = "cargo-near-new-project-description"
 version = "0.1.0"
 edition = "2024"
