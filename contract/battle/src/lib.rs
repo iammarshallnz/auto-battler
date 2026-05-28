@@ -65,10 +65,15 @@ pub struct TickSummary {
 
 #[ext_contract(ext_registry)]
 trait BoardRegistry {
-    fn get_board(&self, player: AccountId) -> Vec<u8>;
-    fn get_roster(&self) -> Vec<UnitDef>;
+    fn get_board(&self, player: AccountId) -> PlayerState;
+    fn load_roster(&self, season_id: Option<u32>) -> Vec<UnitDef>;
 }
-
+#[derive(Clone, Debug)]
+#[near(serializers = [json, borsh])]
+pub struct PendingBattle {
+    pub board_a: PlayerState,
+    pub board_b: PlayerState,
+}
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct GameContract {
@@ -76,7 +81,7 @@ pub struct GameContract {
     pub admin: AccountId,
     // Active and completed battles, keyed by battle_id (e.g. "alice.near:bob.near")
     pub battles: LookupMap<String, Battle>,
-
+    pub pending_battles: LookupMap<String, PendingBattle>,
     // Players waiting for a match. Vec is fine here — small and infrequent writes.
     pub queue: Vec<AccountId>,
 
@@ -91,6 +96,7 @@ impl GameContract {
         Self {
             admin,
             battles: LookupMap::new(StorageKey::Battles),
+            pending_battles: LookupMap::new(StorageKey::PendingBattles),
             queue: Vec::new(),
             registry_contract_id,
         }
@@ -117,11 +123,8 @@ impl GameContract {
             .with_static_gas(Gas::from_tgas(10))
             .get_board(opponent.clone());
 
-        let roster = ext_registry::ext(self.registry_contract_id.clone())
-            .with_static_gas(Gas::from_tgas(10))
-            .get_roster();
         // Join waits for both to complete before firing the callback
-        let _ = fetch_a.and(fetch_b).and(roster).then(
+        let _ = fetch_a.and(fetch_b).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(100))
                 .on_boards_loaded(battle_id),
@@ -132,31 +135,69 @@ impl GameContract {
     #[private]
     pub fn on_boards_loaded(&mut self, battle_id: String) {
         // Validate both cross-contract calls succeeded
-        let board_a_ids = match env::promise_result(0) {
-            PromiseResult::Successful(value) => near_sdk::serde_json::from_slice::<Vec<u8>>(&value)
-                .unwrap_or_else(|_| env::panic_str("Failed to deserialize board A")),
+        let board_a = match env::promise_result(0) {
+            PromiseResult::Successful(value) => {
+                near_sdk::serde_json::from_slice::<PlayerState>(&value)
+                    .unwrap_or_else(|_| env::panic_str("Failed to deserialize board A"))
+            }
             PromiseResult::Failed => env::panic_str("Failed to fetch board A"),
         };
 
-        let board_b_ids = match env::promise_result(1) {
-            PromiseResult::Successful(value) => near_sdk::serde_json::from_slice::<Vec<u8>>(&value)
-                .unwrap_or_else(|_| env::panic_str("Failed to deserialize board B")),
-            PromiseResult::Failed => env::panic_str("Failed to fetch board B"),
-        };
-
-        let roster = match env::promise_result(2) {
+        let board_b = match env::promise_result(1) {
             PromiseResult::Successful(value) => {
-                near_sdk::serde_json::from_slice::<Vec<UnitDef>>(&value)
+                near_sdk::serde_json::from_slice::<PlayerState>(&value)
                     .unwrap_or_else(|_| env::panic_str("Failed to deserialize board B"))
             }
             PromiseResult::Failed => env::panic_str("Failed to fetch board B"),
         };
 
-        // Build boards from the fetched unit IDs
+        let season_id = board_a
+            .season_id
+            .unwrap_or_else(|| env::panic_str("Player A has no season"));
+        assert_eq!(
+            board_a.season_id, board_b.season_id,
+            "Players must be in the same season"
+        );
+
+        // Store boards temporarily so on_roster_loaded can use them
+        // then fire Phase 2 — fetch the roster for this season
+        self.pending_battles
+            .insert(battle_id.clone(), PendingBattle { board_a, board_b });
+
+        let _ = ext_registry::ext(self.registry_contract_id.clone())
+            .with_static_gas(Gas::from_tgas(10))
+            .load_roster(Some(season_id)) // LOAD THE ROSTER FROM THE SEASON
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(Gas::from_tgas(100))
+                    .on_roster_loaded(battle_id),
+            );
+    }
+
+    #[private]
+    pub fn on_roster_loaded(&mut self, battle_id: String) {
+        let roster = match env::promise_result(0) {
+            PromiseResult::Successful(value) => {
+                near_sdk::serde_json::from_slice::<Vec<UnitDef>>(&value)
+                    .unwrap_or_else(|_| env::panic_str("Failed to deserialize roster"))
+            }
+            PromiseResult::Failed => env::panic_str("Failed to fetch roster"),
+        };
+
+        // Retrieve the pending boards
+        let pending = self
+            .pending_battles
+            .get(&battle_id)
+            .unwrap_or_else(|| env::panic_str("No pending battle found"))
+            .clone();
+        self.pending_battles.remove(&battle_id);
+
+        let board_a_ids = pending.board_a.board.unwrap_or_else(|| env::panic_str("No board A"));
+        let board_b_ids = pending.board_b.board.unwrap_or_else(|| env::panic_str("No board B"));
+
         let a_units = self.build_board(board_a_ids, &roster);
         let b_units = self.build_board(board_b_ids, &roster);
 
-        // Store the battle ready to be resolved
         let battle = Battle {
             id: battle_id.clone(),
             roster,
@@ -174,13 +215,10 @@ impl GameContract {
         };
 
         self.battles.insert(battle_id.clone(), battle);
-        env::log_str(&format!("Battle created: {}", battle_id));
-
         self.resolve_battle(battle_id);
     }
 
-
-    // Runs battle in loop till winner 
+    // Runs battle in loop till winner
     fn resolve_battle(&mut self, battle_id: String) -> String {
         let mut battle = self
             .battles
@@ -228,7 +266,6 @@ impl GameContract {
                     battle.status = BattleStatus::PlayerBWins;
                 } else {
                     battle.status = BattleStatus::PlayerAWins;
-
                 }
                 break;
             }
@@ -294,7 +331,6 @@ impl GameContract {
                         unit.cooldown_remaining -= 1;
                     }
                 } else {
-
                     for ability in &unit.abilitys {
                         match *ability {
                             Ability::Damage { amount, lifesteal } => {
@@ -403,13 +439,13 @@ impl GameContract {
         events
     }
 
-    
     // Helper function that builds units from defintions
     fn build_board(&self, unit_ids: Vec<u8>, roster: &Vec<UnitDef>) -> Vec<Unit> {
         unit_ids
             .iter()
             .filter_map(|id| roster.iter().find(|u| u.id == *id))
-            .cloned().map(|def| Unit::from_def(&def))
+            .cloned()
+            .map(|def| Unit::from_def(&def))
             .collect()
     }
 }

@@ -1,7 +1,6 @@
-use near_sdk::json_types::{U64, U128};
 use near_sdk::store::LookupMap;
 use near_sdk::{
-    AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise, env, near, near_bindgen,
+    AccountId, PanicOnDefault, env, near, near_bindgen,
 };
 
 // Player signs up and gets a random number. "registering"
@@ -26,7 +25,8 @@ pub struct BoardRegistry {
     pub admin: AccountId,
     pub players: LookupMap<String, PlayerState>,
     pub ready_players: Vec<AccountId>,
-    pub roster: Vec<UnitDef>,
+    pub seasons: LookupMap<u32, Season>,
+    pub active_season: u32,
     pub battle_contract: AccountId, // only this contract can call set_player_in_battle
 }
 
@@ -34,7 +34,7 @@ pub struct BoardRegistry {
 impl BoardRegistry {
     #[init]
     pub fn new(battle_contract: AccountId) -> Self {
-        let roster = vec![
+        let default_roster = vec![
             UnitDef {
                 id: 0,
                 name: "Goblin".into(),
@@ -158,16 +158,29 @@ impl BoardRegistry {
             },
         ];
 
-        Self {
+        let mut contract = Self {
             admin: env::predecessor_account_id(),
             players: LookupMap::new(StorageKey::Players),
             ready_players: Vec::new(),
-            roster,
+            seasons: LookupMap::new(StorageKey::Season),
+            active_season: 1,
             battle_contract,
-        }
+        };
+
+        contract.seasons.insert(
+            1,
+            Season {
+                id: 1,
+                name: "Season 1".into(),
+                roster: default_roster,
+                non_editable: true,
+            },
+        );
+
+        contract
     }
 
-    pub fn roll_seed(&mut self) {
+    pub fn roll_seed(&mut self, season_id: u32) {
         // Roll seed, only can be done when in Unregistered
 
         let player = env::predecessor_account_id();
@@ -181,18 +194,14 @@ impl BoardRegistry {
                 "Can only roll new seed when Unregistered"
             );
         }
-
+        let roster = self.load_roster(Some(season_id));
         // Reset state entirely — this covers both fresh register and reroll
-        let mut state = PlayerState::new();
+        let mut state = PlayerState::new(Some(season_id));
         state.seed = Some(env::random_seed());
 
         // Roll the shop also as seed is ==== to shop
-
-        state.shop_offer = Some(Self::roll_shop(
-            &state.seed.clone().unwrap(),
-            &self.roster,
-            5,
-        ));
+        
+        state.shop_offer = Some(Self::roll_shop(&state.seed.clone().unwrap(), &roster, 5));
         state.status = PlayerStatus::HasShop;
 
         self.players.insert(key, state);
@@ -215,10 +224,10 @@ impl BoardRegistry {
             .shop_offer
             .as_ref()
             .unwrap_or_else(|| env::panic_str("No shop offer found"));
-
+        let roster = self.load_roster(state.season_id);
         shop_ids
             .iter()
-            .filter_map(|id| self.roster.iter().find(|u| u.id == *id))
+            .filter_map(|id| roster.iter().find(|u| u.id == *id))
             .cloned()
             .collect()
     }
@@ -262,7 +271,7 @@ impl BoardRegistry {
     }
 
     // Get what is used
-    pub fn get_board(&self, player: AccountId) -> Vec<u8> {
+    pub fn get_board(&self, player: AccountId) -> PlayerState {
         let state = self
             .players
             .get(&player.to_string())
@@ -272,10 +281,8 @@ impl BoardRegistry {
             state.status == PlayerStatus::Ready,
             "Player does not have a locked board"
         );
-        if let Some(s) = &state.board {
-            return s.to_vec();
-        }
-        env::panic_str("No board found");
+        
+        state.clone()
     }
 
     // Helper function for rolling shop
@@ -296,7 +303,15 @@ impl BoardRegistry {
         results
     }
 
-    pub fn set_player_at_bazaar(&mut self, player: AccountId, won: bool) {
+    // Helper for getting current roster
+    fn load_roster(&self, season_id: Option<u32>) -> Vec<UnitDef> {
+        let id = season_id.unwrap_or(self.active_season);
+        let season = self.seasons.get(&id)
+            .unwrap_or_else(|| env::panic_str("Season not found"));
+        season.roster.clone()
+    }
+
+    pub fn set_player_at_bazaar(&mut self, player: AccountId) {
         assert_eq!(
             env::predecessor_account_id(),
             self.battle_contract,
@@ -366,39 +381,85 @@ impl BoardRegistry {
             "Can only reset after board prepared"
         );
 
-        self.players.insert(key, PlayerState::new());
+        self.players.insert(key, PlayerState::new(None));
         env::log_str(&format!("{} reset their state", player));
     }
 
     // Admin functions
 
-    pub fn add_unit(&mut self, unit: UnitDef) {
+    // pub fn add_unit(&mut self, unit: UnitDef) {
+    //     assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
+    //     assert!(
+    //         !self.roster.iter().any(|u| u.id == unit.id),
+    //         "Unit with id {} already exists",
+    //         unit.id
+    //     );
+    //     self.roster.push(unit);
+    // }
+
+    // pub fn disable_unit(&mut self, unit_id: u8) {
+    //     assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
+    //     for unit in self.roster.iter_mut() {
+    //         if unit.id == unit_id {
+    //             unit.enabled = false;
+    //             return;
+    //         }
+    //     }
+    // }
+    // pub fn enable_unit(&mut self, unit_id: u8) {
+    //     assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
+    //     for unit in self.roster.iter_mut() {
+    //         if unit.id == unit_id {
+    //             unit.enabled = true;
+    //             return;
+    //         }
+    //     }
+    // }
+
+    pub fn create_season(&mut self, id: u32, name: String, roster: Vec<UnitDef>) {
         assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
-        assert!(
-            !self.roster.iter().any(|u| u.id == unit.id),
-            "Unit with id {} already exists",
-            unit.id
+        assert!(!self.seasons.contains_key(&id), "Season already exists");
+        self.seasons.insert(
+            id,
+            Season {
+                id,
+                name,
+                roster,
+                non_editable: false,
+            },
         );
-        self.roster.push(unit);
     }
 
-    pub fn disable_unit(&mut self, unit_id: u8) {
+    pub fn set_active_season(&mut self, season_id: u32) {
         assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
-        for unit in self.roster.iter_mut() {
-            if unit.id == unit_id {
-                unit.enabled = false;
-                return;
-            }
-        }
+        assert!(self.seasons.contains_key(&season_id), "Season not found");
+        let season = self.seasons.get(&season_id)
+            .unwrap_or_else(|| env::panic_str("Season not found"))
+            .clone();
+        assert_eq!(season.non_editable, true, "Season is still editable");
+        self.active_season = season_id;
     }
-    pub fn enable_unit(&mut self, unit_id: u8) {
+
+    pub fn finish_editing_season(&mut self, season_id: u32) {
         assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
-        for unit in self.roster.iter_mut() {
-            if unit.id == unit_id {
-                unit.enabled = true;
-                return;
-            }
-        }
+        assert!(self.seasons.contains_key(&season_id), "Season not found");
+        let mut season = self.seasons.get(&season_id)
+            .unwrap_or_else(|| env::panic_str("Season not found"))
+            .clone();
+        assert_eq!(season.non_editable, false, "Season must be editable");
+        season.non_editable = true;
+    }
+
+
+    pub fn add_unit_to_season(&mut self, season_id: u32, unit: UnitDef) {
+        assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
+        
+        let mut season = self.seasons.get(&season_id)
+            .unwrap_or_else(|| env::panic_str("Season not found"))
+            .clone();
+        assert_eq!(season.non_editable, false, "Season is not editable");
+        season.roster.push(unit);
+        self.seasons.insert(season_id, season);
     }
 
     // Other functions
@@ -425,17 +486,32 @@ impl BoardRegistry {
     }
 
     pub fn get_roster(&self) -> Vec<UnitDef> {
-        self.roster.clone()
+        self.load_roster(None)
+    }
+
+    pub fn get_current_state(&self, player: AccountId) -> PlayerStatus {
+        self.players
+            .get(&player.to_string())
+            .unwrap()
+            .status
+            .clone()
     }
 
     pub fn get_bazaar_offers(&self, player: AccountId) -> Vec<UnitUpgrade> {
-        let state = self.players.get(&player.to_string())
+        let state = self
+            .players
+            .get(&player.to_string())
             .unwrap_or_else(|| env::panic_str("Player not registered"));
 
-        assert_eq!(state.status, PlayerStatus::AtBazaar, "Player is not at the bazaar");
+        assert_eq!(
+            state.status,
+            PlayerStatus::AtBazaar,
+            "Player is not at the bazaar"
+        );
 
-        state.bazaar_offers.clone()
+        state
+            .bazaar_offers
+            .clone()
             .unwrap_or_else(|| env::panic_str("No offers found"))
     }
-   
 }

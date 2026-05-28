@@ -5,6 +5,8 @@ use near_sdk::{BorshStorageKey, near};
 pub enum StorageKey {
     Players,
     Battles,
+    Season,
+    PendingBattles
 }
 
 #[near(serializers = [json, borsh])]
@@ -88,7 +90,7 @@ pub enum PlayerStatus {
     AtBazaar,
 }
 #[derive(Clone, Debug)]
-#[near(serializers = [borsh])]
+#[near(serializers = [borsh, json])]
 pub struct PlayerState {
     pub status: PlayerStatus,
     pub seed: Option<Vec<u8>>,       // derived after reveal
@@ -96,11 +98,13 @@ pub struct PlayerState {
     pub board: Option<Vec<u8>>,      // locked unit IDs
     pub bazaar_offers: Option<Vec<UnitUpgrade>>,
     pub upgrades: Vec<UnitUpgrade>, // persists across battles
-    pub player_life: u8,
+    pub games_played: u8,
+    pub games_won: u8,
+    pub season_id: Option<u32>,
 }
 
 impl PlayerState {
-    pub fn new() -> Self {
+    pub fn new(season_id: Option<u32>) -> Self {
         Self {
             status: PlayerStatus::Unregistered,
             seed: None,
@@ -108,7 +112,18 @@ impl PlayerState {
             board: None,
             bazaar_offers: None,
             upgrades: Vec::new(),
-            player_life: 10
+            games_played: 0,
+            games_won: 0,
+            season_id,
         }
     }
+}
+
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct Season {
+    pub id: u32,
+    pub name: String,
+    pub roster: Vec<UnitDef>,
+    pub non_editable: bool,
 }
