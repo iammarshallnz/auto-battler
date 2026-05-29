@@ -1,7 +1,6 @@
-use near_sdk::json_types::{U64, U128};
 use near_sdk::store::LookupMap;
 use near_sdk::{
-    AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseResult, env,
+    AccountId,  Gas,  PanicOnDefault, PromiseResult, env,
     ext_contract, near, near_bindgen,
 };
 
@@ -67,6 +66,8 @@ pub struct TickSummary {
 trait BoardRegistry {
     fn get_board(&self, player: AccountId) -> PlayerState;
     fn load_roster(&self, season_id: Option<u32>) -> Vec<UnitDef>;
+    fn set_game_played(&mut self, player: String);
+    fn set_games_won(&mut self, player: String);
 }
 #[derive(Clone, Debug)]
 #[near(serializers = [json, borsh])]
@@ -102,13 +103,13 @@ impl GameContract {
         }
     }
 
-    fn assert_admin(&self) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.admin,
-            "Unauthorized: admin only"
-        );
-    }
+    // fn assert_admin(&self) {
+    //     assert_eq!(
+    //         env::predecessor_account_id(),
+    //         self.admin,
+    //         "Unauthorized: admin only"
+    //     );
+    // }
 
     pub fn start_battle(&mut self, opponent: AccountId) {
         let player = env::predecessor_account_id();
@@ -158,6 +159,8 @@ impl GameContract {
             board_a.season_id, board_b.season_id,
             "Players must be in the same season"
         );
+        assert!(board_a.games_played < 3, "Player a has played all games");
+        assert!(board_b.games_played < 3, "Player b has played all games");
 
         // Store boards temporarily so on_roster_loaded can use them
         // then fire Phase 2 — fetch the roster for this season
@@ -192,8 +195,14 @@ impl GameContract {
             .clone();
         self.pending_battles.remove(&battle_id);
 
-        let board_a_ids = pending.board_a.board.unwrap_or_else(|| env::panic_str("No board A"));
-        let board_b_ids = pending.board_b.board.unwrap_or_else(|| env::panic_str("No board B"));
+        let board_a_ids = pending
+            .board_a
+            .board
+            .unwrap_or_else(|| env::panic_str("No board A"));
+        let board_b_ids = pending
+            .board_b
+            .board
+            .unwrap_or_else(|| env::panic_str("No board B"));
 
         let a_units = self.build_board(board_a_ids, &roster);
         let b_units = self.build_board(board_b_ids, &roster);
@@ -215,11 +224,38 @@ impl GameContract {
         };
 
         self.battles.insert(battle_id.clone(), battle);
-        self.resolve_battle(battle_id);
+        let status = self.resolve_battle(battle_id.clone());
+
+        let accounts: Vec<&str> = battle_id.split(':').collect();
+        let player_a = accounts[0].to_string();
+        let player_b = accounts[1].to_string();
+
+        // These fire after the transaction — correct place for XCC
+        let _ = ext_registry::ext(self.registry_contract_id.clone())
+            .with_static_gas(Gas::from_tgas(10))
+            .set_game_played(player_a.clone());
+
+        let _ = ext_registry::ext(self.registry_contract_id.clone())
+            .with_static_gas(Gas::from_tgas(10))
+            .set_game_played(player_b.clone());
+
+        match status {
+            BattleStatus::PlayerAWins => {
+                let _ = ext_registry::ext(self.registry_contract_id.clone())
+                    .with_static_gas(Gas::from_tgas(10))
+                    .set_games_won(player_a);
+            }
+            BattleStatus::PlayerBWins => {
+                let _ = ext_registry::ext(self.registry_contract_id.clone())
+                    .with_static_gas(Gas::from_tgas(10))
+                    .set_games_won(player_b);
+            }
+            _ => {}
+        }
     }
 
     // Runs battle in loop till winner
-    fn resolve_battle(&mut self, battle_id: String) -> String {
+    fn resolve_battle(&mut self, battle_id: String) -> BattleStatus {
         let mut battle = self
             .battles
             .get(&battle_id)
@@ -262,10 +298,10 @@ impl GameContract {
 
             if battle.a_health <= 0 || battle.b_health <= 0 {
                 if battle.a_health >= battle.b_health {
-                    //  a wins ?? ?
-                    battle.status = BattleStatus::PlayerBWins;
-                } else {
+                    //
                     battle.status = BattleStatus::PlayerAWins;
+                } else {
+                    battle.status = BattleStatus::PlayerBWins;
                 }
                 break;
             }
@@ -277,7 +313,7 @@ impl GameContract {
         let log_json = near_sdk::serde_json::to_string(&log).unwrap();
         env::log_str(&format!("BATTLE_LOG:{}", log_json));
 
-        format!("{:?}", battle.status)
+        battle.status
     }
 
     // -----------------------------------------------------------------------

@@ -1,7 +1,5 @@
 use near_sdk::store::LookupMap;
-use near_sdk::{
-    AccountId, PanicOnDefault, env, near, near_bindgen,
-};
+use near_sdk::{AccountId, PanicOnDefault, env, near, near_bindgen};
 
 // Player signs up and gets a random number. "registering"
 
@@ -19,7 +17,7 @@ use near_sdk::{
 pub mod structs;
 use crate::structs::*;
 
-#[near(contract_state)]
+#[cfg_attr(feature = "contract", near(contract_state))]
 #[derive(PanicOnDefault)]
 pub struct BoardRegistry {
     pub admin: AccountId,
@@ -29,7 +27,7 @@ pub struct BoardRegistry {
     pub active_season: u32,
     pub battle_contract: AccountId, // only this contract can call set_player_in_battle
 }
-
+#[cfg(feature = "contract")]
 #[near_bindgen]
 impl BoardRegistry {
     #[init]
@@ -200,7 +198,7 @@ impl BoardRegistry {
         state.seed = Some(env::random_seed());
 
         // Roll the shop also as seed is ==== to shop
-        
+
         state.shop_offer = Some(Self::roll_shop(&state.seed.clone().unwrap(), &roster, 5));
         state.status = PlayerStatus::HasShop;
 
@@ -281,7 +279,7 @@ impl BoardRegistry {
             state.status == PlayerStatus::Ready,
             "Player does not have a locked board"
         );
-        
+
         state.clone()
     }
 
@@ -306,7 +304,9 @@ impl BoardRegistry {
     // Helper for getting current roster
     fn load_roster(&self, season_id: Option<u32>) -> Vec<UnitDef> {
         let id = season_id.unwrap_or(self.active_season);
-        let season = self.seasons.get(&id)
+        let season = self
+            .seasons
+            .get(&id)
             .unwrap_or_else(|| env::panic_str("Season not found"));
         season.roster.clone()
     }
@@ -385,36 +385,27 @@ impl BoardRegistry {
         env::log_str(&format!("{} reset their state", player));
     }
 
+    pub fn set_game_played(&mut self, player: String) {
+        let mut state = self.players.get(&player)
+            .unwrap_or_else(|| env::panic_str("Player not found"))
+            .clone();
+
+        state.games_played -= 1;
+
+        self.players.insert(player.to_string(), state);
+    }
+
+    pub fn set_games_won(&mut self, player: String) {
+        let mut state = self.players.get(&player)
+            .unwrap_or_else(|| env::panic_str("Player not found"))
+            .clone();
+
+        state.games_won += 1;
+
+        self.players.insert(player.to_string(), state);
+    }
+
     // Admin functions
-
-    // pub fn add_unit(&mut self, unit: UnitDef) {
-    //     assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
-    //     assert!(
-    //         !self.roster.iter().any(|u| u.id == unit.id),
-    //         "Unit with id {} already exists",
-    //         unit.id
-    //     );
-    //     self.roster.push(unit);
-    // }
-
-    // pub fn disable_unit(&mut self, unit_id: u8) {
-    //     assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
-    //     for unit in self.roster.iter_mut() {
-    //         if unit.id == unit_id {
-    //             unit.enabled = false;
-    //             return;
-    //         }
-    //     }
-    // }
-    // pub fn enable_unit(&mut self, unit_id: u8) {
-    //     assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
-    //     for unit in self.roster.iter_mut() {
-    //         if unit.id == unit_id {
-    //             unit.enabled = true;
-    //             return;
-    //         }
-    //     }
-    // }
 
     pub fn create_season(&mut self, id: u32, name: String, roster: Vec<UnitDef>) {
         assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
@@ -433,7 +424,9 @@ impl BoardRegistry {
     pub fn set_active_season(&mut self, season_id: u32) {
         assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
         assert!(self.seasons.contains_key(&season_id), "Season not found");
-        let season = self.seasons.get(&season_id)
+        let season = self
+            .seasons
+            .get(&season_id)
             .unwrap_or_else(|| env::panic_str("Season not found"))
             .clone();
         assert_eq!(season.non_editable, true, "Season is still editable");
@@ -443,18 +436,21 @@ impl BoardRegistry {
     pub fn finish_editing_season(&mut self, season_id: u32) {
         assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
         assert!(self.seasons.contains_key(&season_id), "Season not found");
-        let mut season = self.seasons.get(&season_id)
+        let mut season = self
+            .seasons
+            .get(&season_id)
             .unwrap_or_else(|| env::panic_str("Season not found"))
             .clone();
         assert_eq!(season.non_editable, false, "Season must be editable");
         season.non_editable = true;
     }
 
-
     pub fn add_unit_to_season(&mut self, season_id: u32, unit: UnitDef) {
         assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
-        
-        let mut season = self.seasons.get(&season_id)
+
+        let mut season = self
+            .seasons
+            .get(&season_id)
             .unwrap_or_else(|| env::panic_str("Season not found"))
             .clone();
         assert_eq!(season.non_editable, false, "Season is not editable");
