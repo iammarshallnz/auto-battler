@@ -58,6 +58,6 @@ TO RESET
 ```bash
 near delete $BOARD_ID $ACCOUNT_ID 
 
-near create-account $BOARD_ID --masterAccount $ACCOUNT_ID --initialBalance 2 
+near create-account $BOARD_ID --masterAccount $ACCOUNT_ID --initialBalance 10
 
 ```

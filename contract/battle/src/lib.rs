@@ -1,7 +1,6 @@
 use near_sdk::store::LookupMap;
 use near_sdk::{
-    AccountId,  Gas,  PanicOnDefault, PromiseResult, env,
-    ext_contract, near, near_bindgen,
+    AccountId, Gas, PanicOnDefault, PromiseResult, env, ext_contract, near, near_bindgen,
 };
 
 use board_setup::structs::*;
@@ -103,17 +102,10 @@ impl GameContract {
         }
     }
 
-    // fn assert_admin(&self) {
-    //     assert_eq!(
-    //         env::predecessor_account_id(),
-    //         self.admin,
-    //         "Unauthorized: admin only"
-    //     );
-    // }
-
     pub fn start_battle(&mut self, opponent: AccountId) {
         let player = env::predecessor_account_id();
         let battle_id = format!("{}:{}", player, opponent);
+        // FAILS IF PLAYER IS NOT IN READY STATE ON BOARD CONTRACT
 
         // Fire both fetches in parallel as a promise join
         let fetch_a = ext_registry::ext(self.registry_contract_id.clone())

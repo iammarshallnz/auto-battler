@@ -96,8 +96,8 @@ pub struct PlayerState {
     pub seed: Option<Vec<u8>>,       // derived after reveal
     pub shop_offer: Option<Vec<u8>>, // unit IDs offered to this player
     pub board: Option<Vec<u8>>,      // locked unit IDs
-    pub bazaar_offers: Option<Vec<UnitUpgrade>>,
-    pub upgrades: Vec<UnitUpgrade>, // persists across battles
+    // pub bazaar_offers: Option<Vec<UnitUpgrade>>,
+    // pub upgrades: Vec<UnitUpgrade>, // persists across battles
     pub games_played: u8,
     pub games_won: u8,
     pub season_id: Option<u32>,
@@ -110,8 +110,8 @@ impl PlayerState {
             seed: None,
             shop_offer: None,
             board: None,
-            bazaar_offers: None,
-            upgrades: Vec::new(),
+            // bazaar_offers: None,
+            // upgrades: Vec::new(),
             games_played: 0,
             games_won: 0,
             season_id,

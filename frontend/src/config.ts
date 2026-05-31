@@ -10,7 +10,7 @@ export const NETWORK_ID = import.meta.env.VITE_NETWORK_ID as 'testnet' | 'mainne
 export const RPC_URL =
   NETWORK_ID === 'mainnet'
     ? 'https://rpc.mainnet.near.org'
-    : 'https://rpc.testnet.near.org'
+    : 'https://rpc.testnet.fastnear.com'
 
 
 

@@ -1,5 +1,5 @@
 use near_sdk::store::LookupMap;
-use near_sdk::{AccountId, PanicOnDefault, env, near, near_bindgen};
+use near_sdk::{AccountId, NearToken, PanicOnDefault, Promise, env, near, near_bindgen};
 
 // Player signs up and gets a random number. "registering"
 
@@ -177,8 +177,15 @@ impl BoardRegistry {
 
         contract
     }
-
+    #[payable]
     pub fn roll_seed(&mut self, season_id: u32) {
+        let deposit = env::attached_deposit();
+        assert_eq!(
+            deposit,
+            NearToken::from_near(1),
+            "Must attach exactly 1 NEAR"
+        );
+
         // Roll seed, only can be done when in Unregistered
 
         let player = env::predecessor_account_id();
@@ -206,7 +213,7 @@ impl BoardRegistry {
         env::log_str(&format!("{} committed a seed", player));
     }
 
-    // View shop data VEIW FUNCTION 
+    // View shop data VEIW FUNCTION
     pub fn get_shop(&self, player: AccountId) -> Vec<UnitDef> {
         let state = self
             .players
@@ -311,59 +318,59 @@ impl BoardRegistry {
         season.roster.clone()
     }
 
-    pub fn set_player_at_bazaar(&mut self, player: AccountId) {
-        assert_eq!(
-            env::predecessor_account_id(),
-            self.battle_contract,
-            "Battle contract only"
-        );
+    // pub fn set_player_at_bazaar(&mut self, player: AccountId) {
+    //     assert_eq!(
+    //         env::predecessor_account_id(),
+    //         self.battle_contract,
+    //         "Battle contract only"
+    //     );
 
-        let key = player.to_string();
-        let mut state = self
-            .players
-            .get(&key)
-            .unwrap_or_else(|| env::panic_str("Player not found"))
-            .clone();
+    //     let key = player.to_string();
+    //     let mut state = self
+    //         .players
+    //         .get(&key)
+    //         .unwrap_or_else(|| env::panic_str("Player not found"))
+    //         .clone();
 
-        // Generate 3 upgrade offers using a fresh seed
-        let seed = env::random_seed();
-        let offers = self.roll_upgrades(&seed, &state.board.clone().unwrap());
+    //     // Generate 3 upgrade offers using a fresh seed
+    //     let seed = env::random_seed();
+    //     let offers = self.roll_upgrades(&seed, &state.board.clone().unwrap());
 
-        state.bazaar_offers = Some(offers);
-        state.status = PlayerStatus::AtBazaar;
-        self.players.insert(key, state);
-    }
+    //     //state.bazaar_offers = Some(offers);
+    //     state.status = PlayerStatus::AtBazaar;
+    //     self.players.insert(key, state);
+    // }
 
-    pub fn pick_upgrade(&mut self, offer_index: usize) {
-        let player = env::predecessor_account_id();
-        let key = player.to_string();
+    // pub fn pick_upgrade(&mut self, offer_index: usize) {
+    //     let player = env::predecessor_account_id();
+    //     let key = player.to_string();
 
-        let mut state = self
-            .players
-            .get(&key)
-            .unwrap_or_else(|| env::panic_str("Player not found"))
-            .clone();
+    //     let mut state = self
+    //         .players
+    //         .get(&key)
+    //         .unwrap_or_else(|| env::panic_str("Player not found"))
+    //         .clone();
 
-        assert_eq!(state.status, PlayerStatus::AtBazaar, "Not at bazaar");
+    //     assert_eq!(state.status, PlayerStatus::AtBazaar, "Not at bazaar");
 
-        let offers = state
-            .bazaar_offers
-            .clone()
-            .unwrap_or_else(|| env::panic_str("No offers found"));
+    //     let offers = state
+    //         .bazaar_offers
+    //         .clone()
+    //         .unwrap_or_else(|| env::panic_str("No offers found"));
 
-        assert!(offer_index < offers.len(), "Invalid offer index");
+    //     assert!(offer_index < offers.len(), "Invalid offer index");
 
-        // Apply the chosen upgrade to their board
-        let upgrade = &offers[offer_index];
+    //     // Apply the chosen upgrade to their board
+    //     let upgrade = &offers[offer_index];
 
-        // store upgrades separately so the battle contract can apply them
-        state.upgrades.push(upgrade.clone());
-        state.bazaar_offers = None;
-        state.status = PlayerStatus::Ready;
+    //     // store upgrades separately so the battle contract can apply them
+    //     state.upgrades.push(upgrade.clone());
+    //     state.bazaar_offers = None;
+    //     state.status = PlayerStatus::Ready;
 
-        self.players.insert(key, state);
-        env::log_str(&format!("{} picked an upgrade", player));
-    }
+    //     self.players.insert(key, state);
+    //     env::log_str(&format!("{} picked an upgrade", player));
+    // }
 
     // Reset
     pub fn reset_player(&mut self) {
@@ -386,17 +393,46 @@ impl BoardRegistry {
     }
 
     pub fn set_game_played(&mut self, player: String) {
-        let mut state = self.players.get(&player)
+        let mut state = self
+            .players
+            .get(&player)
             .unwrap_or_else(|| env::panic_str("Player not found"))
             .clone();
 
-        state.games_played -= 1;
+        state.games_played += 1;
 
-        self.players.insert(player.to_string(), state);
+        if state.games_played >= 3 {
+            // Calculate payout based on wins
+            let payout = match state.games_won {
+                1 => NearToken::from_yoctonear(400_000_000_000_000_000_000_000), // 0.4 NEAR
+                2 => NearToken::from_near(1),                                    // 1.0 NEAR
+                3 => NearToken::from_yoctonear(1_500_000_000_000_000_000_000_000), // 1.5 NEAR
+                _ => NearToken::from_near(0), // 0 wins — no payout
+            };
+
+            // Reset state for next series
+            state.games_played = 0;
+            state.games_won = 0;
+            state.status = PlayerStatus::Unregistered;
+            state.board = None;
+            state.seed = None;
+            state.shop_offer = None;
+
+            self.players.insert(player.clone(), state);
+
+            // Send payout if they won at least 1
+            if payout.as_yoctonear() > 0 {
+                let _ = Promise::new(AccountId::try_from(player).unwrap()).transfer(payout);
+            }
+        } else {
+            // Not finished yet — just update state
+            self.players.insert(player.to_string(), state);
+        }
     }
-
     pub fn set_games_won(&mut self, player: String) {
-        let mut state = self.players.get(&player)
+        let mut state = self
+            .players
+            .get(&player)
             .unwrap_or_else(|| env::panic_str("Player not found"))
             .clone();
 
@@ -486,26 +522,24 @@ impl BoardRegistry {
     }
 
     pub fn get_current_state(&self, player: AccountId) -> Option<PlayerState> {
-        self.players
-            .get(&player.to_string())
-            .cloned()
+        self.players.get(&player.to_string()).cloned()
     }
 
-    pub fn get_bazaar_offers(&self, player: AccountId) -> Vec<UnitUpgrade> {
-        let state = self
-            .players
-            .get(&player.to_string())
-            .unwrap_or_else(|| env::panic_str("Player not registered"));
+    // pub fn get_bazaar_offers(&self, player: AccountId) -> Vec<UnitUpgrade> {
+    //     let state = self
+    //         .players
+    //         .get(&player.to_string())
+    //         .unwrap_or_else(|| env::panic_str("Player not registered"));
 
-        assert_eq!(
-            state.status,
-            PlayerStatus::AtBazaar,
-            "Player is not at the bazaar"
-        );
+    //     assert_eq!(
+    //         state.status,
+    //         PlayerStatus::AtBazaar,
+    //         "Player is not at the bazaar"
+    //     );
 
-        state
-            .bazaar_offers
-            .clone()
-            .unwrap_or_else(|| env::panic_str("No offers found"))
-    }
+    //     state
+    //         .bazaar_offers
+    //         .clone()
+    //         .unwrap_or_else(|| env::panic_str("No offers found"))
+    // }
 }
