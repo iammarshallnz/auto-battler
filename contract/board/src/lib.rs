@@ -485,11 +485,10 @@ impl BoardRegistry {
         self.load_roster(None)
     }
 
-    pub fn get_current_state(&self, player: AccountId) -> PlayerStatus {
+    pub fn get_current_state(&self, player: AccountId) -> Option<PlayerState> {
         self.players
             .get(&player.to_string())
-            .map(|s| s.status.clone())
-            .unwrap_or(PlayerStatus::Unregistered)
+            .cloned()
     }
 
     pub fn get_bazaar_offers(&self, player: AccountId) -> Vec<UnitUpgrade> {

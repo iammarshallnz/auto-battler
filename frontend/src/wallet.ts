@@ -190,8 +190,8 @@ export async function getRoster(): Promise<UnitDef[]> {
   return viewCall<UnitDef[]>(BOARD_CONTRACT_ID, 'get_roster', {})
 }
 
-export async function getCurrentState(accountId: string): Promise<PlayerState> {
-  return viewCall<PlayerState>(BOARD_CONTRACT_ID, 'get_current_state', {player: accountId})
+export async function getCurrentState(accountId: string): Promise<PlayerState | null> {
+  return viewCall<PlayerState | null>(BOARD_CONTRACT_ID, 'get_current_state', {player: accountId})
 }
 
 export async function getBazaarOffers(accountId: string): Promise<UnitUpgrade[]> {
