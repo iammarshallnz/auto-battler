@@ -206,7 +206,7 @@ impl BoardRegistry {
         env::log_str(&format!("{} committed a seed", player));
     }
 
-    // View shop data
+    // View shop data VEIW FUNCTION 
     pub fn get_shop(&self, player: AccountId) -> Vec<UnitDef> {
         let state = self
             .players
@@ -488,9 +488,8 @@ impl BoardRegistry {
     pub fn get_current_state(&self, player: AccountId) -> PlayerStatus {
         self.players
             .get(&player.to_string())
-            .unwrap()
-            .status
-            .clone()
+            .map(|s| s.status.clone())
+            .unwrap_or(PlayerStatus::Unregistered)
     }
 
     pub fn get_bazaar_offers(&self, player: AccountId) -> Vec<UnitUpgrade> {
