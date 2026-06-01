@@ -53,12 +53,12 @@ pub struct TickSummary {
     pub tick: u32,
     pub events: Vec<AbilityEvent>,
     // end state after this tick resolves
-    pub a_health: i32,
-    pub a_shield: u32,
-    pub a_fire: u32,
-    pub b_health: i32,
-    pub b_shield: u32,
-    pub b_fire: u32,
+    // pub a_health: i32,
+    // pub a_shield: u32,
+    // pub a_fire: u32,
+    // pub b_health: i32,
+    // pub b_shield: u32,
+    // pub b_fire: u32,
 }
 
 #[ext_contract(ext_registry)]
@@ -260,7 +260,7 @@ impl GameContract {
             "Battle already resolved"
         );
 
-        const MAX_TICKS: u32 = 200; // gas safety cap
+        const MAX_TICKS: u32 = 60; // gas safety cap
         let mut log: Vec<TickSummary> = Vec::new();
 
         loop {
@@ -271,21 +271,15 @@ impl GameContract {
             log.push(TickSummary {
                 tick: battle.tick,
                 events,
-                a_health: battle.a_health,
-                a_shield: battle.a_shield,
-                a_fire: battle.a_fire,
-                b_health: battle.b_health,
-                b_shield: battle.b_shield,
-                b_fire: battle.b_fire,
             });
 
             battle.tick += 1;
 
             if battle.tick > MAX_TICKS {
-                let val = battle.tick as i32 % 2_i32;
+                let overticks: i32 = (battle.tick - MAX_TICKS) as i32;
                 // 2 damage per tick past the limit, alternating +1 between sides
-                battle.a_health -= 2 + (val);
-                battle.b_health -= 2 + (val ^ 1);
+                battle.a_health -= (3 * overticks);
+                battle.b_health -= (3 * overticks);
             }
 
             if battle.a_health <= 0 || battle.b_health <= 0 {

@@ -47,7 +47,7 @@ near deploy $BOARD_ID \
 
 near view $BOARD_ID get_roster '{}'
 
-near call $BOARD_ID roll_seed '{"season_id": 1}' --accountId $ACCOUNT_ID
+near call $BOARD_ID roll_seed '{"season_id": 1}' --accountId $ACCOUNT_ID --deposit 1
 
 near call $BOARD_ID get_shop '{"player": "'$ACCOUNT_ID'"}' --accountId $ACCOUNT_ID
 near call $BOARD_ID reset_player '{}' --accountId $ACCOUNT_ID
