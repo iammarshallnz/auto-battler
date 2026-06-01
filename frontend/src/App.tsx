@@ -4,6 +4,7 @@ import {
   getAccountId,
   getShop,
   getCurrentState,
+  getBoard,
   getRoster,
   getReadyPlayers,
   // getBazaarOffers,
@@ -28,6 +29,26 @@ function renderUpgrade(upgrade: UnitUpgrade) {
   const [type, value] = Object.entries(upgrade.upgrade)[0];
   if (value === null) return type;
   return `${type}: ${JSON.stringify(value)}`;
+}
+
+interface BattleTickState {
+  tick: number;
+  a_health: number;
+  a_shield: number;
+  a_fire: number;
+  b_health: number;
+  b_shield: number;
+  b_fire: number;
+  events: any[];
+  activatedA?: number[];
+  activatedB?: number[];
+}
+
+interface BattleReplay {
+  ticks: BattleTickState[];
+  opponent: string;
+  boardA?: number[];
+  boardB?: number[];
 }
 
 function parseBattleLogsFromTransaction(result: any): string[] {
@@ -63,6 +84,151 @@ function parseBattleLogsFromTransaction(result: any): string[] {
     .map((log) => log.slice("BATTLE_LOG:".length));
 }
 
+function computeBattleState(
+  battleLogJson: string,
+  opponent: string,
+  rosterDefs: UnitDef[],
+  boardAIds: number[],
+  boardBIds: number[],
+): BattleReplay | null {
+  try {
+    const rawTicks = JSON.parse(battleLogJson);
+    if (!Array.isArray(rawTicks)) return null;
+    // Build roster map for lookup
+    const rosterMap = new Map<number, UnitDef>();
+    for (const def of rosterDefs) rosterMap.set(def.id, def);
+
+    // Initialize units for both sides from board ids
+    const makeUnits = (ids: number[]) =>
+      ids.map((id) => {
+        const def = rosterMap.get(id) ?? ({} as UnitDef);
+        return {
+          def_id: id,
+          name: def?.name ?? `Unit ${id}`,
+          base_cooldown: def?.base_cooldown ?? 1,
+          cooldown_remaining: def?.base_cooldown ?? 1,
+          stunned: 0,
+          activated: false,
+        };
+      });
+
+    const a_units = makeUnits(boardAIds ?? []);
+    const b_units = makeUnits(boardBIds ?? []);
+
+    let a_health = 100;
+    let a_shield = 0;
+    let a_fire = 0;
+    let b_health = 100;
+    let b_shield = 0;
+    let b_fire = 0;
+
+    const ticks: BattleTickState[] = [];
+
+    for (const rawTick of rawTicks) {
+      const tick = rawTick.tick ?? 0;
+      const events = rawTick.events ?? [];
+
+      // Reset activated flags
+      for (const u of a_units) u.activated = false;
+      for (const u of b_units) u.activated = false;
+
+      // Simulate per-contract unit cooldown/stun decrement and mark actors
+      for (const side of ["a", "b"] as const) {
+        const units = side === "a" ? a_units : b_units;
+        for (const unit of units) {
+          if (unit.cooldown_remaining > 0) {
+            if (unit.stunned > 0) {
+              unit.stunned -= 1;
+            } else {
+              unit.cooldown_remaining -= 1;
+            }
+          } else {
+            // This unit will act this tick (contract sets cooldown after action)
+            unit.activated = true;
+            unit.cooldown_remaining = unit.base_cooldown;
+          }
+        }
+      }
+
+      // Apply each event to compute aggregated state and mark specific units
+      for (const event of events) {
+        const ability = event.ability;
+        const side = event.side; // true = player A fired, false = player B fired
+
+        // Find matching unit instance to highlight (first match of def_id)
+        const units = side ? a_units : b_units;
+        const unit = units.find((u) => u.def_id === event.id);
+        if (unit) unit.activated = true;
+
+        if (ability?.Damage) {
+          const { amount, lifesteal } = ability.Damage;
+          if (side) {
+            const absorbed = Math.min(b_shield, amount);
+            b_shield -= absorbed;
+            b_health -= amount - absorbed;
+            if (lifesteal) a_health += amount;
+          } else {
+            const absorbed = Math.min(a_shield, amount);
+            a_shield -= absorbed;
+            a_health -= amount - absorbed;
+            if (lifesteal) b_health += amount;
+          }
+        } else if (ability?.Heal) {
+          const { amount } = ability.Heal;
+          if (side) a_health += amount;
+          else b_health += amount;
+        } else if (ability?.Shield) {
+          const { amount } = ability.Shield;
+          if (side) a_shield += amount;
+          else b_shield += amount;
+        } else if (ability?.FireDot) {
+          const { amount } = ability.FireDot;
+          if (side) b_fire += amount;
+          else a_fire += amount;
+        } else if (ability?.Cleanse) {
+          if (side) a_fire = 0;
+          else b_fire = 0;
+        }
+      }
+
+      // Apply fire damage on even ticks
+      if (tick % 2 === 0) {
+        const b_absorbed = Math.min(b_shield, b_fire);
+        b_shield -= b_absorbed;
+        b_health -= b_fire - b_absorbed;
+        b_fire = Math.max(0, b_fire - 1);
+
+        const a_absorbed = Math.min(a_shield, a_fire);
+        a_shield -= a_absorbed;
+        a_health -= a_fire - a_absorbed;
+        a_fire = Math.max(0, a_fire - 1);
+      }
+
+      // collect activated ids for UI highlighting
+      const activatedA = a_units.filter((u) => u.activated).map((u) => u.def_id);
+      const activatedB = b_units.filter((u) => u.activated).map((u) => u.def_id);
+
+      ticks.push({
+        tick,
+        a_health,
+        a_shield,
+        a_fire,
+        b_health,
+        b_shield,
+        b_fire,
+        events,
+        activatedA,
+        activatedB,
+      });
+    }
+
+    return { ticks, opponent, boardA: boardAIds, boardB: boardBIds };
+  } catch (e) {
+    console.error("Failed to parse battle log:", e);
+    return null;
+  }
+}
+
 export default function App() {
   const [accountId, setAccountId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,6 +240,9 @@ export default function App() {
   const [readyPlayers, setReadyPlayers] = useState<string[] | null>(null);
   const [battleLogs, setBattleLogs] = useState<string[]>([]);
   const [battleLoading, setBattleLoading] = useState<string | null>(null);
+  const [battleReplays, setBattleReplays] = useState<Record<string, BattleReplay>>({});
+  const [currentReplay, setCurrentReplay] = useState<BattleReplay | null>(null);
+  const [replayTick, setReplayTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [lockLoading, setLockLoading] = useState(false);
   const [registerLoading, setRegisterLoading] = useState(false);
@@ -418,10 +587,36 @@ export default function App() {
                               const result = await startBattle(opponent);
                               const logs = parseBattleLogsFromTransaction(result);
                               if (logs.length) {
-                                setBattleLogs((prev) => [
-                                  ...prev,
-                                  `Battle vs ${opponent}: ${logs.join(" | ")}`,
+                                const battleLogJson = logs[0];
+                                // fetch both players' boards to build per-unit displays
+                                const [boardAState, boardBState] = await Promise.all([
+                                  getBoard(accountId),
+                                  getBoard(opponent),
                                 ]);
+                                const boardAIds = boardAState?.board ?? [];
+                                const boardBIds = boardBState?.board ?? [];
+                                const replay = computeBattleState(
+                                  battleLogJson,
+                                  opponent,
+                                  roster ?? [],
+                                  boardAIds,
+                                  boardBIds,
+                                );
+                                if (replay) {
+                                  setBattleReplays((prev) => ({
+                                    ...prev,
+                                    [opponent]: replay,
+                                  }));
+                                  setBattleLogs((prev) => [
+                                    ...prev,
+                                    `Battle vs ${opponent}: ${replay.ticks.length} ticks`,
+                                  ]);
+                                } else {
+                                  setBattleLogs((prev) => [
+                                    ...prev,
+                                    `Battle vs ${opponent}: failed to parse log`,
+                                  ]);
+                                }
                               } else {
                                 setBattleLogs((prev) => [
                                   ...prev,
@@ -459,6 +654,185 @@ export default function App() {
                     <li key={`${log}-${index}`}>{log}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {Object.keys(battleReplays).length > 0 && (
+              <div className="card">
+                <h2 className="card-title">Battle Replays</h2>
+                {!currentReplay ? (
+                  <ul>
+                    {Object.entries(battleReplays).map(([opponent, _replay]) => (
+                      <li key={opponent} style={{ marginBottom: "8px" }}>
+                        <button
+                          className="btn btn-primary"
+                          onClick={() => {
+                            setCurrentReplay(battleReplays[opponent]);
+                            setReplayTick(0);
+                          }}
+                        >
+                          View Battle vs {opponent}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div style={{ marginTop: "12px" }}>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setCurrentReplay(null)}
+                      style={{ marginBottom: "16px" }}
+                    >
+                      Back to Replays
+                    </button>
+                    <div style={{ marginTop: "16px", display: "flex", gap: "8px" }}>
+                        <button
+                          className="btn btn-secondary"
+                          disabled={replayTick === 0}
+                          onClick={() => setReplayTick((t) => t - 1)}
+                        >
+                          Previous
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          disabled={replayTick >= currentReplay.ticks.length - 1}
+                          onClick={() => setReplayTick((t) => t + 1)}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    <div style={{ marginBottom: "16px" }}>
+                      <p>
+                        <strong>Battle vs {currentReplay.opponent}</strong> — Tick{" "}
+                        {replayTick + 1} / {currentReplay.ticks.length}
+                      </p>
+
+                      {currentReplay.ticks[replayTick] && (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: "16px",
+                            marginTop: "12px",
+                          }}
+                        >
+                          <div style={{ border: "1px solid #ccc", padding: "8px" }}>
+                            <p>
+                              <strong>Your Side (A)</strong>
+                            </p>
+                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                              {(currentReplay.boardA ?? []).map((id) => {
+                                const def = roster?.find((r) => r.id === id);
+                                const activated = currentReplay.ticks[replayTick]?.activatedA?.includes(id);
+                                return (
+                                  <div
+                                    key={id}
+                                    style={{
+                                      border: `2px solid ${activated ? "#4caf50" : "#ddd"}`,
+                                      padding: "8px",
+                                      minWidth: "140px",
+                                      background: activated ? "#e8f5e9" : "#fff",
+                                    }}
+                                  >
+                                    <div style={{ fontWeight: 600 }}>{def?.name ?? `Unit ${id}`}</div>
+                                    <div style={{ fontSize: 12, color: "#555" }}>ID: {id}</div>
+                                    <div style={{ fontSize: 12 }}>
+                                      CD: {def?.base_cooldown ?? "?"}
+                                    </div>
+                                    <div style={{ fontSize: 12, marginTop: 6 }}>
+                                      {def?.abilitys?.slice(0, 2).map((a, i) => (
+                                        <div key={i} style={{ fontSize: 11 }}>{renderAbility(a)}</div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <div style={{ marginTop: 8 }}>
+                              <p>
+                                HP: <strong>{currentReplay.ticks[replayTick].a_health}</strong>
+                              </p>
+                              <p>
+                                Shield: <strong>{currentReplay.ticks[replayTick].a_shield}</strong>
+                              </p>
+                              <p>
+                                Fire: <strong>{currentReplay.ticks[replayTick].a_fire}</strong>
+                              </p>
+                            </div>
+                          </div>
+
+                          <div style={{ border: "1px solid #ccc", padding: "8px" }}>
+                            <p>
+                              <strong>Opponent (B)</strong>
+                            </p>
+                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                              {(currentReplay.boardB ?? []).map((id) => {
+                                const def = roster?.find((r) => r.id === id);
+                                const activated = currentReplay.ticks[replayTick]?.activatedB?.includes(id);
+                                return (
+                                  <div
+                                    key={id}
+                                    style={{
+                                      border: `2px solid ${activated ? "#f44336" : "#ddd"}`,
+                                      padding: "8px",
+                                      minWidth: "140px",
+                                      background: activated ? "#ffebee" : "#fff",
+                                    }}
+                                  >
+                                    <div style={{ fontWeight: 600 }}>{def?.name ?? `Unit ${id}`}</div>
+                                    <div style={{ fontSize: 12, color: "#555" }}>ID: {id}</div>
+                                    <div style={{ fontSize: 12 }}>
+                                      CD: {def?.base_cooldown ?? "?"}
+                                    </div>
+                                    <div style={{ fontSize: 12, marginTop: 6 }}>
+                                      {def?.abilitys?.slice(0, 2).map((a, i) => (
+                                        <div key={i} style={{ fontSize: 11 }}>{renderAbility(a)}</div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <div style={{ marginTop: 8 }}>
+                              <p>
+                                HP: <strong>{currentReplay.ticks[replayTick].b_health}</strong>
+                              </p>
+                              <p>
+                                Shield: <strong>{currentReplay.ticks[replayTick].b_shield}</strong>
+                              </p>
+                              <p>
+                                Fire: <strong>{currentReplay.ticks[replayTick].b_fire}</strong>
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {currentReplay.ticks[replayTick]?.events.length > 0 && (
+                        <div style={{ marginTop: "16px" }}>
+                          <p>
+                            <strong>Events:</strong>
+                          </p>
+                          <ul>
+                            {currentReplay.ticks[replayTick].events.map(
+                              (event, idx) => (
+                                <li key={idx}>
+                                  Unit {event.id} (
+                                  {event.side ? "Your Side" : "Opponent"}): 
+                                  {renderAbility(event.ability)}
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                      )}
+
+                      
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
