@@ -64,7 +64,7 @@ pub struct TickSummary {
 #[ext_contract(ext_registry)]
 trait BoardRegistry {
     fn get_board(&self, player: AccountId) -> PlayerState;
-    fn load_roster(&self, season_id: Option<u32>) -> Vec<UnitDef>;
+    fn load_roster(&self, season_id: u32) -> Vec<UnitDef>;
     fn set_game_played(&mut self, player: String);
     fn set_games_won(&mut self, player: String);
 }
@@ -145,8 +145,8 @@ impl GameContract {
         };
 
         let season_id = board_a
-            .season_id
-            .unwrap_or_else(|| env::panic_str("Player A has no season"));
+            .season_id;
+
         assert_eq!(
             board_a.season_id, board_b.season_id,
             "Players must be in the same season"
@@ -161,7 +161,7 @@ impl GameContract {
 
         let _ = ext_registry::ext(self.registry_contract_id.clone())
             .with_static_gas(Gas::from_tgas(10))
-            .load_roster(Some(season_id)) // LOAD THE ROSTER FROM THE SEASON
+            .load_roster(season_id) // LOAD THE ROSTER FROM THE SEASON
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(Gas::from_tgas(100))

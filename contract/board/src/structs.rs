@@ -100,11 +100,11 @@ pub struct PlayerState {
     // pub upgrades: Vec<UnitUpgrade>, // persists across battles
     pub games_played: u8,
     pub games_won: u8,
-    pub season_id: Option<u32>,
+    pub season_id: u32,
 }
 
 impl PlayerState {
-    pub fn new(season_id: Option<u32>) -> Self {
+    pub fn new(season_id: u32) -> Self {
         Self {
             status: PlayerStatus::Unregistered,
             seed: None,

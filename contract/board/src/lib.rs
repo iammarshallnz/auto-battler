@@ -199,9 +199,9 @@ impl BoardRegistry {
                 "Can only roll new seed when Unregistered"
             );
         }
-        let roster = self.load_roster(Some(season_id));
+        let roster = self.load_roster(season_id);
         // Reset state entirely — this covers both fresh register and reroll
-        let mut state = PlayerState::new(Some(season_id));
+        let mut state = PlayerState::new(season_id);
         state.seed = Some(env::random_seed());
 
         // Roll the shop also as seed is ==== to shop
@@ -307,13 +307,11 @@ impl BoardRegistry {
         }
         results
     }
-
+    //TODO: find why not working on chain
     // Helper for getting current roster
-    pub fn load_roster(&self, season_id: Option<u32>) -> Vec<UnitDef> {
-        let id = season_id.unwrap_or(self.active_season);
-        let season = self
-            .seasons
-            .get(&id)
+    pub fn load_roster(&self, season_id: u32) -> Vec<UnitDef> {
+
+        let season = self.seasons.get(&season_id)
             .unwrap_or_else(|| env::panic_str("Season not found"));
         season.roster.clone()
     }
@@ -388,7 +386,7 @@ impl BoardRegistry {
             "Can only reset after board prepared"
         );
 
-        self.players.insert(key, PlayerState::new(None));
+        self.players.insert(key, PlayerState::new(self.active_season));
         env::log_str(&format!("{} reset their state", player));
     }
 
@@ -518,7 +516,7 @@ impl BoardRegistry {
     }
 
     pub fn get_roster(&self) -> Vec<UnitDef> {
-        self.load_roster(None)
+        self.load_roster(self.active_season)
     }
 
     pub fn get_current_state(&self, player: AccountId) -> Option<PlayerState> {

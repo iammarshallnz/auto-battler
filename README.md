@@ -52,6 +52,7 @@ near call $BOARD_ID roll_seed '{"season_id": 1}' --accountId $ACCOUNT_ID
 near call $BOARD_ID get_shop '{"player": "'$ACCOUNT_ID'"}' --accountId $ACCOUNT_ID
 near call $BOARD_ID reset_player '{}' --accountId $ACCOUNT_ID
 
+near call $BATTLE_ID start_battle '{"opponent":"autobattletest2.testnet"}' --accountId $ACCOUNT_ID --gas 300000000000000
 ```
 
 TO RESET
