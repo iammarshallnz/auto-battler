@@ -40,12 +40,10 @@ pub struct CommitEntry {
 
 #[near(serializers = [json, borsh])]
 pub struct AbilityEvent {
-    pub tick: u32,
-    pub attacker: u8, // def_id
+    pub id: u8, // def_id
     pub ability: Ability,
     pub target: Option<u8>, // def_id of target for stun
     pub side: bool,         // true = board_a fired, false = board_b fired
-    pub value: u32,         // damage dealt, hp healed, etc.
 }
 
 #[near(serializers = [json, borsh])]
@@ -366,47 +364,39 @@ impl GameContract {
 
                                 // LOGGING
                                 events.push(AbilityEvent {
-                                    tick: battle.tick,
-                                    attacker: unit.def_id,
+                                    id: unit.def_id,
                                     ability: Ability::Damage { amount, lifesteal },
                                     target: None,
                                     side,
-                                    value: remaining, // actual damage after shield
                                 });
                             }
                             Ability::Heal { amount } => {
                                 *atk_health += amount as i32;
 
                                 events.push(AbilityEvent {
-                                    tick: battle.tick,
-                                    attacker: unit.def_id,
+                                    id: unit.def_id,
                                     ability: Ability::Heal { amount },
                                     target: None,
                                     side,
-                                    value: amount,
                                 });
                             }
                             Ability::Shield { amount } => {
                                 *atk_shield += amount;
 
                                 events.push(AbilityEvent {
-                                    tick: battle.tick,
-                                    attacker: unit.def_id,
+                                    id: unit.def_id,
                                     ability: Ability::Shield { amount },
                                     target: None,
                                     side,
-                                    value: amount,
                                 });
                             }
                             Ability::FireDot { amount } => {
                                 *def_fire += amount;
                                 events.push(AbilityEvent {
-                                    tick: battle.tick,
-                                    attacker: unit.def_id,
+                                    id: unit.def_id,
                                     ability: Ability::FireDot { amount },
                                     target: None,
                                     side,
-                                    value: amount,
                                 });
                             }
                             Ability::Stun {
@@ -419,27 +409,23 @@ impl GameContract {
                                     def_units[random_number as usize].stunned += duration;
 
                                     events.push(AbilityEvent {
-                                        tick: battle.tick,
-                                        attacker: unit.def_id,
+                                        id: unit.def_id,
                                         ability: Ability::Stun {
                                             duration,
                                             amount_of_targets,
                                         },
                                         target: Some(target),
                                         side,
-                                        value: duration,
                                     });
                                 }
                             }
                             Ability::Cleanse => {
                                 *atk_fire = 0;
                                 events.push(AbilityEvent {
-                                    tick: battle.tick,
-                                    attacker: unit.def_id,
+                                    id: unit.def_id,
                                     ability: Ability::Cleanse {},
                                     target: None,
                                     side,
-                                    value: 0,
                                 });
                             }
                             Ability::None => {}
