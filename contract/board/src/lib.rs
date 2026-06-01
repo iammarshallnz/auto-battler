@@ -309,7 +309,7 @@ impl BoardRegistry {
     }
 
     // Helper for getting current roster
-    fn load_roster(&self, season_id: Option<u32>) -> Vec<UnitDef> {
+    pub fn load_roster(&self, season_id: Option<u32>) -> Vec<UnitDef> {
         let id = season_id.unwrap_or(self.active_season);
         let season = self
             .seasons

@@ -50,7 +50,7 @@ near view $BOARD_ID get_roster '{}'
 near call $BOARD_ID roll_seed '{"season_id": 1}' --accountId $ACCOUNT_ID
 
 near call $BOARD_ID get_shop '{"player": "'$ACCOUNT_ID'"}' --accountId $ACCOUNT_ID
-
+near call $BOARD_ID reset_player '{}' --accountId $ACCOUNT_ID
 
 ```
 
@@ -59,5 +59,22 @@ TO RESET
 near delete $BOARD_ID $ACCOUNT_ID 
 
 near create-account $BOARD_ID --masterAccount $ACCOUNT_ID --initialBalance 10
+
+near delete $BATTLE_ID $ACCOUNT_ID 
+
+near create-account $BATTLE_ID --masterAccount $ACCOUNT_ID --initialBalance 10
+
+
+near deploy $BOARD_ID \
+  board/target/near/board_setup.wasm \
+  --initFunction new \
+  --initArgs '{"battle_contract": "'$BATTLE_ID'"}' \
+
+
+
+near deploy $BATTLE_ID \
+  battle/target/near/battle_contract.wasm  \
+  --initFunction new \
+  --initArgs '{"registry_contract_id": "'$BOARD_ID'", "admin": "'$ACCOUNT_ID'"}' \
 
 ```

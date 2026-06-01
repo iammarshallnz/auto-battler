@@ -5,9 +5,11 @@ import {
   getShop,
   getCurrentState,
   getRoster,
+  getReadyPlayers,
   // getBazaarOffers,
   rollSeed,
   lockBoard,
+  startBattle,
   isSignedIn,
   showModal,
   signOut,
@@ -28,6 +30,39 @@ function renderUpgrade(upgrade: UnitUpgrade) {
   return `${type}: ${JSON.stringify(value)}`;
 }
 
+function parseBattleLogsFromTransaction(result: any): string[] {
+  const logs: string[] = [];
+
+  const collect = (item: any) => {
+    if (!item) return;
+    if (Array.isArray(item.outcome?.logs)) {
+      for (const log of item.outcome.logs) {
+        if (typeof log === "string") logs.push(log);
+      }
+    }
+    if (Array.isArray(item.logs)) {
+      for (const log of item.logs) {
+        if (typeof log === "string") logs.push(log);
+      }
+    }
+  };
+
+  if (result?.transaction_outcome || result?.receipts_outcome) {
+    collect(result.transaction_outcome);
+    for (const receipt of result.receipts_outcome ?? []) {
+      collect(receipt);
+    }
+  } else if (Array.isArray(result)) {
+    for (const item of result) {
+      collect(item);
+    }
+  }
+
+  return logs
+    .filter((log) => log.startsWith("BATTLE_LOG:"))
+    .map((log) => log.slice("BATTLE_LOG:".length));
+}
+
 export default function App() {
   const [accountId, setAccountId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,6 +71,9 @@ export default function App() {
   const [selectedShop, setSelectedShop] = useState<number[]>([]);
   // const [bazaarOffers, setBazaarOffers] = useState<UnitUpgrade[] | null>(null)
   const [roster, setRoster] = useState<UnitDef[] | null>(null);
+  const [readyPlayers, setReadyPlayers] = useState<string[] | null>(null);
+  const [battleLogs, setBattleLogs] = useState<string[]>([]);
+  const [battleLoading, setBattleLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lockLoading, setLockLoading] = useState(false);
   const [registerLoading, setRegisterLoading] = useState(false);
@@ -48,16 +86,16 @@ export default function App() {
     try {
       // The contract may return either a full PlayerState, a PlayerStatus string, or null for new players.
       const current: any = await getCurrentState(account);
-
+      console.log(current)
       if (
-        current === null ||
-        (typeof current === "string" && current === "Unregistered")
+        current === null || current.status === "Unregistered"
       ) {
         setUnregistered(true);
         setPlayerState(null);
         setShop(null);
         //setBazaarOffers(null)
         setRoster(null);
+        setReadyPlayers(null);
       } else {
         setUnregistered(false);
 
@@ -65,15 +103,17 @@ export default function App() {
           setPlayerState(current);
         }
 
-        const [shopData, rosterData] = await Promise.all([
+        const [shopData, rosterData, readyPlayersData] = await Promise.all([
           getShop(account).catch(() => [] as any),
           //getBazaarOffers(account).catch(() => [] as any),
           getRoster(),
+          getReadyPlayers().catch(() => [] as any),
         ]);
 
         setShop(shopData);
         // setBazaarOffers(bazaarData)
         setRoster(rosterData);
+        setReadyPlayers(readyPlayersData);
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
@@ -83,6 +123,7 @@ export default function App() {
         setShop(null);
         //setBazaarOffers(null)
         setRoster(null);
+        setReadyPlayers(null);
         setError(null);
       } else {
         setError(message);
@@ -90,6 +131,7 @@ export default function App() {
         setShop(null);
         //setBazaarOffers(null)
         setRoster(null);
+        setReadyPlayers(null);
       }
     } finally {
       setLoading(false);
@@ -137,6 +179,8 @@ export default function App() {
     setShop(null);
     //setBazaarOffers(null)
     setRoster(null);
+    setReadyPlayers(null);
+    setBattleLogs([]);
     setSelectedShop([]);
     setUnregistered(false);
     setError(null);
@@ -147,9 +191,11 @@ export default function App() {
     if (!accountId) return;
     setRegisterLoading(true);
     setError(null);
-
+    setUnregistered(false);
     try {
       await rollSeed(1, "1");
+      // Wait for transaction to be finalized on-chain
+      await new Promise(resolve => setTimeout(resolve, 3000));
       await loadPlayerData(accountId);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Registration failed");
@@ -157,6 +203,10 @@ export default function App() {
       setRegisterLoading(false);
     }
   }
+
+  const readyOpponentList = readyPlayers?.filter(
+    (opponent) => opponent !== accountId,
+  ) ?? [];
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -257,93 +307,160 @@ export default function App() {
               )}
             </div>
 
-            <div className="card">
-              <h2 className="card-title">Shop Offers</h2>
-              {shop?.length ? (
-                <>
-                  <p className="muted">
-                    Select up to 3 units to lock into your board.
-                  </p>
-                  <ul className="shop-list">
-                    {shop.map((item) => {
-                      const selected = selectedShop.includes(item.id);
-                      const disabled = !selected && selectedShop.length >= 3;
-                      return (
-                        <li
-                          key={item.id}
-                          className={`shop-item ${selected ? "selected" : ""} ${disabled ? "disabled" : ""}`}
-                        >
-                          <label
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "8px",
-                            }}
+            {playerState?.status === "HasShop" && (
+              <div className="card">
+                <h2 className="card-title">Shop Offers</h2>
+                {shop?.length ? (
+                  <>
+                    <p className="muted">
+                      Select up to 3 units to lock into your board.
+                    </p>
+                    <ul className="shop-list">
+                      {shop.map((item) => {
+                        const selected = selectedShop.includes(item.id);
+                        const disabled = !selected && selectedShop.length >= 3;
+                        return (
+                          <li
+                            key={item.id}
+                            className={`shop-item ${selected ? "selected" : ""} ${disabled ? "disabled" : ""}`}
                           >
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              disabled={disabled}
-                              onChange={() => {
-                                setSelectedShop((prev) => {
-                                  if (prev.includes(item.id))
-                                    return prev.filter((id) => id !== item.id);
-                                  if (prev.length >= 3) return prev;
-                                  return [...prev, item.id];
-                                });
+                            <label
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "8px",
                               }}
-                            />
-                            <div>
-                              <strong>{item.name}</strong> (ID: {item.id}) —{" "}
-                              {item.enabled ? "Enabled" : "Disabled"}
-                              <div className="hint">
-                                Abilities:{" "}
-                                {item.abilitys.map(renderAbility).join(", ")}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                disabled={disabled}
+                                onChange={() => {
+                                  setSelectedShop((prev) => {
+                                    if (prev.includes(item.id))
+                                      return prev.filter((id) => id !== item.id);
+                                    if (prev.length >= 3) return prev;
+                                    return [...prev, item.id];
+                                  });
+                                }}
+                              />
+                              <div>
+                                <strong>{item.name}</strong> (ID: {item.id}) —{" "}
+                                {item.enabled ? "Enabled" : "Disabled"}
+                                <div className="hint">
+                                  Abilities:{" "}
+                                  {item.abilitys.map(renderAbility).join(", ")}
+                                </div>
                               </div>
-                            </div>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
 
-                  <div style={{ marginTop: 8 }}>
-                    <span className="muted">
-                      Selected: {selectedShop.length}/3
-                    </span>
-                    {selectedShop.length === 3 && (
-                      <button
-                        className="btn btn-primary"
-                        style={{ marginLeft: 12 }}
-                        disabled={lockLoading}
-                        onClick={async () => {
-                          if (!accountId) return;
-                          setLockLoading(true);
-                          try {
-                            await lockBoard(selectedShop);
-                            // reload player data to reflect locked board
-                            await loadPlayerData(accountId);
-                            setSelectedShop([]);
-                          } catch (e: unknown) {
-                            setError(
-                              e instanceof Error
-                                ? e.message
-                                : "Failed to lock board",
-                            );
-                          } finally {
-                            setLockLoading(false);
-                          }
-                        }}
-                      >
-                        {lockLoading ? "Locking…" : "Lock Board"}
-                      </button>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <p className="muted">No shop offers loaded yet.</p>
-              )}
-            </div>
+                    <div style={{ marginTop: 8 }}>
+                      <span className="muted">
+                        Selected: {selectedShop.length}/3
+                      </span>
+                      {selectedShop.length === 3 && (
+                        <button
+                          className="btn btn-primary"
+                          style={{ marginLeft: 12 }}
+                          disabled={lockLoading}
+                          onClick={async () => {
+                            if (!accountId) return;
+                            setLockLoading(true);
+                            try {
+                              await lockBoard(selectedShop);
+                              // Wait for transaction to be finalized on-chain
+                              await new Promise(resolve => setTimeout(resolve, 3000));
+                              // reload player data to reflect locked board
+                              await loadPlayerData(accountId);
+                              setSelectedShop([]);
+                            } catch (e: unknown) {
+                              setError(
+                                e instanceof Error
+                                  ? e.message
+                                  : "Failed to lock board",
+                              );
+                            } finally {
+                              setLockLoading(false);
+                            }
+                          }}
+                        >
+                          {lockLoading ? "Locking…" : "Lock Board"}
+                        </button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="muted">No shop offers loaded yet.</p>
+                )}
+              </div>
+            )}
+
+            {playerState?.status === "Ready" && (
+              <div className="card">
+                <h2 className="card-title">Possible Opponents</h2>
+                {readyOpponentList.length ? (
+                  <ul>
+                    {readyOpponentList.map((opponent) => (
+                      <li key={opponent} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span>{opponent}</span>
+                        <button
+                          className="btn btn-primary"
+                          disabled={battleLoading === opponent}
+                          onClick={async () => {
+                            if (!accountId) return;
+                            setError(null);
+                            setBattleLoading(opponent);
+                            try {
+                              const result = await startBattle(opponent);
+                              const logs = parseBattleLogsFromTransaction(result);
+                              if (logs.length) {
+                                setBattleLogs((prev) => [
+                                  ...prev,
+                                  `Battle vs ${opponent}: ${logs.join(" | ")}`,
+                                ]);
+                              } else {
+                                setBattleLogs((prev) => [
+                                  ...prev,
+                                  `Battle vs ${opponent}: no BATTLE_LOG returned`,
+                                ]);
+                              }
+                              await new Promise((resolve) => setTimeout(resolve, 3000));
+                              await loadPlayerData(accountId);
+                            } catch (e: unknown) {
+                              setError(
+                                e instanceof Error
+                                  ? e.message
+                                  : "Failed to start battle",
+                              );
+                            } finally {
+                              setBattleLoading(null);
+                            }
+                          }}
+                        >
+                          {battleLoading === opponent ? "Battling…" : "Battle"}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted">No other players are ready yet.</p>
+                )}
+              </div>
+            )}
+            {battleLogs.length > 0 && (
+              <div className="card">
+                <h2 className="card-title">Battle Logs</h2>
+                <ul>
+                  {battleLogs.map((log, index) => (
+                    <li key={`${log}-${index}`}>{log}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* <div className="card">
               <h2 className="card-title">Bazaar Offers</h2>

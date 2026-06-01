@@ -80,18 +80,22 @@ export async function changeCall(
   args: Record<string, unknown> = {},
   depositNear: string = "0",
   depositYocto: string | null = null,
-): Promise<void> {
+): Promise<any> {
+  if (!contractId) {
+    throw new Error("Contract ID is missing for changeCall");
+  }
+
   const wallet = await selector.wallet();
   const deposit = depositYocto ?? nearToYocto(depositNear);
 
-  await wallet.signAndSendTransaction({
+  return wallet.signAndSendTransaction({
     receiverId: contractId,
     actions: [
       {
         functionCall: {
           methodName,
           args,
-          gas: "200000000000000", // 200 TGas
+          gas: "800000000000000", // 800 TGas
           deposit,
         },
       },
@@ -196,29 +200,33 @@ export async function getCurrentState(
 export async function rollSeed(
   season_id: number,
   depositNear: string = "0",
-): Promise<void> {
-  changeCall(
+): Promise<any> {
+  return changeCall(
     BOARD_CONTRACT_ID,
     "roll_seed",
     { season_id: season_id },
     depositNear,
   );
 }
-export async function lockBoard(chosen_ids: number[]): Promise<void> {
-  changeCall(BOARD_CONTRACT_ID, "lock_board", { chosen_ids: chosen_ids });
+export async function lockBoard(chosen_ids: number[]): Promise<any> {
+  return changeCall(BOARD_CONTRACT_ID, "lock_board", { chosen_ids: chosen_ids });
 }
 // index from 0-2
 // export async function pickUpgrade(offer_index: number): Promise<void> {
-//   changeCall(BOARD_CONTRACT_ID, 'pick_upgrade', {offer_index: offer_index})
+//   return changeCall(BOARD_CONTRACT_ID, 'pick_upgrade', {offer_index: offer_index})
 // }
-export async function resetSelf(): Promise<void> {
-  changeCall(BOARD_CONTRACT_ID, "reset_player", {});
+export async function resetSelf(): Promise<any> {
+  return changeCall(BOARD_CONTRACT_ID, "reset_player", {});
 }
 
-export async function finalise(): Promise<void> {
-  changeCall(BOARD_CONTRACT_ID, "finalise", {});
+export async function startBattle(opponent: string): Promise<any> {
+  return changeCall(BATTLE_CONTRACT_ID, "start_battle", { opponent: opponent });
 }
 
-export async function withdraw(): Promise<void> {
-  changeCall(BOARD_CONTRACT_ID, "withdraw", {});
+export async function finalise(): Promise<any> {
+  return changeCall(BOARD_CONTRACT_ID, "finalise", {});
+}
+
+export async function withdraw(): Promise<any> {
+  return changeCall(BOARD_CONTRACT_ID, "withdraw", {});
 }
