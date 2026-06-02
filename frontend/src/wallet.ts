@@ -183,6 +183,27 @@ export async function getRoster(): Promise<UnitDef[]> {
   return viewCall<UnitDef[]>(BOARD_CONTRACT_ID, "get_roster", {});
 }
 
+// Admin change calls
+export async function createSeason(
+  id: number,
+  name: string,
+  roster: UnitDef[],
+): Promise<any> {
+  return changeCall(BOARD_CONTRACT_ID, "create_season", { id, name, roster });
+}
+
+export async function setActiveSeason(season_id: number): Promise<any> {
+  return changeCall(BOARD_CONTRACT_ID, "set_active_season", { season_id });
+}
+
+export async function finishEditingSeason(season_id: number): Promise<any> {
+  return changeCall(BOARD_CONTRACT_ID, "finish_editing_season", { season_id });
+}
+
+export async function addUnitToSeason(season_id: number, unit: UnitDef): Promise<any> {
+  return changeCall(BOARD_CONTRACT_ID, "add_unit_to_season", { season_id, unit });
+}
+
 export async function getCurrentState(
   accountId: string,
 ): Promise<PlayerState | null> {

@@ -31,7 +31,7 @@ pub struct BoardRegistry {
 #[near_bindgen]
 impl BoardRegistry {
     #[init]
-    pub fn new(battle_contract: AccountId) -> Self {
+    pub fn new(admin: Option<AccountId>, battle_contract: AccountId) -> Self {
         let default_roster = vec![
             UnitDef {
                 id: 0,
@@ -156,8 +156,10 @@ impl BoardRegistry {
             },
         ];
 
+        let admin = admin.unwrap_or_else(|| env::predecessor_account_id());
+
         let mut contract = Self {
-            admin: env::predecessor_account_id(),
+            admin,
             players: LookupMap::new(StorageKey::Players),
             ready_players: Vec::new(),
             seasons: LookupMap::new(StorageKey::Season),
@@ -269,8 +271,10 @@ impl BoardRegistry {
 
         state.board = Some(chosen_ids);
         state.status = PlayerStatus::Ready;
-        self.ready_players.push(player.clone()); // add to vec of player ready
-
+        if let None = self.ready_players.iter().find(|x| **x == player) {
+            self.ready_players.push(player.clone()); // add to vec of player ready
+        }
+        
         self.players.insert(key, state);
         env::log_str(&format!("{} locked their board — Ready", player));
     }
@@ -494,22 +498,22 @@ impl BoardRegistry {
 
     // Other functions
 
-    fn roll_upgrades(&self, seed: &Vec<u8>, board: &Vec<u8>) -> Vec<UnitUpgrade> {
-        // One upgrade offer per unit on their board, pick 3
-        let mut offers = Vec::new();
-        for (i, &unit_id) in board.iter().enumerate() {
-            let byte = seed[i % 32] % 3;
-            let upgrade = match byte {
-                0 => UpgradeType::BonusDamage { amount: 3 },
-                1 => UpgradeType::BonusCooldown { reduction: 1 },
-                _ => UpgradeType::ExtraAbility {
-                    ability: Ability::Shield { amount: 5 },
-                },
-            };
-            offers.push(UnitUpgrade { unit_id, upgrade });
-        }
-        offers
-    }
+    // fn roll_upgrades(&self, seed: &Vec<u8>, board: &Vec<u8>) -> Vec<UnitUpgrade> {
+    //     // One upgrade offer per unit on their board, pick 3
+    //     let mut offers = Vec::new();
+    //     for (i, &unit_id) in board.iter().enumerate() {
+    //         let byte = seed[i % 32] % 3;
+    //         let upgrade = match byte {
+    //             0 => UpgradeType::BonusDamage { amount: 3 },
+    //             1 => UpgradeType::BonusCooldown { reduction: 1 },
+    //             _ => UpgradeType::ExtraAbility {
+    //                 ability: Ability::Shield { amount: 5 },
+    //             },
+    //         };
+    //         offers.push(UnitUpgrade { unit_id, upgrade });
+    //     }
+    //     offers
+    // }
 
     pub fn get_ready_players(&self) -> Vec<AccountId> {
         self.ready_players.to_vec()

@@ -69,7 +69,7 @@ near create-account $BATTLE_ID --masterAccount $ACCOUNT_ID --initialBalance 10
 near deploy $BOARD_ID \
   board/target/near/board_setup.wasm \
   --initFunction new \
-  --initArgs '{"battle_contract": "'$BATTLE_ID'"}' \
+  --initArgs '{"battle_contract": "'$BATTLE_ID'", "admin": "'$ACCOUNT_ID'"}' \
 
 
 

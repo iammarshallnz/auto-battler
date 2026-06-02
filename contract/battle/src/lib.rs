@@ -276,8 +276,8 @@ impl GameContract {
             if battle.tick > MAX_TICKS {
                 let overticks: i32 = (battle.tick - MAX_TICKS) as i32;
                 // 2 damage per tick past the limit, alternating +1 between sides
-                battle.a_health -= (3 * overticks);
-                battle.b_health -= (3 * overticks);
+                battle.a_health -= 3 * overticks;
+                battle.b_health -= 3 * overticks;
             }
 
             if battle.a_health <= 0 || battle.b_health <= 0 {

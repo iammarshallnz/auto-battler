@@ -7,6 +7,10 @@ import {
   getBoard,
   getRoster,
   getReadyPlayers,
+  createSeason,
+  setActiveSeason,
+  finishEditingSeason,
+  addUnitToSeason,
   // getBazaarOffers,
   rollSeed,
   lockBoard,
@@ -42,6 +46,8 @@ interface BattleTickState {
   events: any[];
   activatedA?: number[];
   activatedB?: number[];
+  cooldownsA?: number[];
+  cooldownsB?: number[];
 }
 
 interface BattleReplay {
@@ -204,9 +210,11 @@ function computeBattleState(
         a_fire = Math.max(0, a_fire - 1);
       }
 
-      // collect activated ids for UI highlighting
+      // collect activated ids for UI highlighting and cooldowns for display
       const activatedA = a_units.filter((u) => u.activated).map((u) => u.def_id);
       const activatedB = b_units.filter((u) => u.activated).map((u) => u.def_id);
+      const cooldownsA = a_units.map((u) => u.cooldown_remaining ?? 0);
+      const cooldownsB = b_units.map((u) => u.cooldown_remaining ?? 0);
 
       ticks.push({
         tick,
@@ -219,6 +227,8 @@ function computeBattleState(
         events,
         activatedA,
         activatedB,
+        cooldownsA,
+        cooldownsB,
       });
     }
 
@@ -247,6 +257,11 @@ export default function App() {
   const [lockLoading, setLockLoading] = useState(false);
   const [registerLoading, setRegisterLoading] = useState(false);
   const [unregistered, setUnregistered] = useState(false);
+  const [adminSeasonId, setAdminSeasonId] = useState<string>("");
+  const [adminSeasonName, setAdminSeasonName] = useState<string>("");
+  const [adminRosterJson, setAdminRosterJson] = useState<string>("");
+  const [adminUnitJson, setAdminUnitJson] = useState<string>("");
+  const [adminMessage, setAdminMessage] = useState<string | null>(null);
 
   async function loadPlayerData(account: string) {
     setLoading(true);
@@ -721,29 +736,53 @@ export default function App() {
                               <strong>Your Side (A)</strong>
                             </p>
                             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                              {(currentReplay.boardA ?? []).map((id) => {
+                              {(currentReplay.boardA ?? []).map((id, idx) => {
                                 const def = roster?.find((r) => r.id === id);
                                 const activated = currentReplay.ticks[replayTick]?.activatedA?.includes(id);
+                                const cd = currentReplay.ticks[replayTick]?.cooldownsA?.[idx];
+                                // compute damage events for this unit this tick
+                                const damageEvents = (currentReplay.ticks[replayTick]?.events || []).filter(
+                                  (ev) => ev.side === true && ev.id === id && ev.ability?.Damage,
+                                );
+                                const totalDamage = damageEvents.reduce(
+                                  (sum, ev) => sum + (ev.ability?.Damage?.amount ?? 0),
+                                  0,
+                                );
                                 return (
                                   <div
-                                    key={id}
+                                    key={id + "-a-" + idx}
                                     style={{
                                       border: `2px solid ${activated ? "#4caf50" : "#ddd"}`,
                                       padding: "8px",
                                       minWidth: "140px",
                                       background: activated ? "#e8f5e9" : "#fff",
+                                      position: "relative",
                                     }}
                                   >
                                     <div style={{ fontWeight: 600 }}>{def?.name ?? `Unit ${id}`}</div>
                                     <div style={{ fontSize: 12, color: "#555" }}>ID: {id}</div>
                                     <div style={{ fontSize: 12 }}>
-                                      CD: {def?.base_cooldown ?? "?"}
+                                      CD: <strong>{cd ?? def?.base_cooldown ?? "?"}</strong>
                                     </div>
                                     <div style={{ fontSize: 12, marginTop: 6 }}>
                                       {def?.abilitys?.slice(0, 2).map((a, i) => (
                                         <div key={i} style={{ fontSize: 11 }}>{renderAbility(a)}</div>
                                       ))}
                                     </div>
+                                    {activated && totalDamage > 0 && (
+                                      <div style={{
+                                        position: "absolute",
+                                        right: 8,
+                                        top: 8,
+                                        background: "rgba(0,0,0,0.75)",
+                                        color: "#fff",
+                                        padding: "4px 6px",
+                                        borderRadius: 4,
+                                        fontWeight: 700,
+                                      }}>
+                                        -{totalDamage}
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -767,29 +806,52 @@ export default function App() {
                               <strong>Opponent (B)</strong>
                             </p>
                             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                              {(currentReplay.boardB ?? []).map((id) => {
+                              {(currentReplay.boardB ?? []).map((id, idx) => {
                                 const def = roster?.find((r) => r.id === id);
                                 const activated = currentReplay.ticks[replayTick]?.activatedB?.includes(id);
+                                const cd = currentReplay.ticks[replayTick]?.cooldownsB?.[idx];
+                                const damageEvents = (currentReplay.ticks[replayTick]?.events || []).filter(
+                                  (ev) => ev.side === false && ev.id === id && ev.ability?.Damage,
+                                );
+                                const totalDamage = damageEvents.reduce(
+                                  (sum, ev) => sum + (ev.ability?.Damage?.amount ?? 0),
+                                  0,
+                                );
                                 return (
                                   <div
-                                    key={id}
+                                    key={id + "-b-" + idx}
                                     style={{
                                       border: `2px solid ${activated ? "#f44336" : "#ddd"}`,
                                       padding: "8px",
                                       minWidth: "140px",
                                       background: activated ? "#ffebee" : "#fff",
+                                      position: "relative",
                                     }}
                                   >
                                     <div style={{ fontWeight: 600 }}>{def?.name ?? `Unit ${id}`}</div>
                                     <div style={{ fontSize: 12, color: "#555" }}>ID: {id}</div>
                                     <div style={{ fontSize: 12 }}>
-                                      CD: {def?.base_cooldown ?? "?"}
+                                      CD: <strong>{cd ?? def?.base_cooldown ?? "?"}</strong>
                                     </div>
                                     <div style={{ fontSize: 12, marginTop: 6 }}>
                                       {def?.abilitys?.slice(0, 2).map((a, i) => (
                                         <div key={i} style={{ fontSize: 11 }}>{renderAbility(a)}</div>
                                       ))}
                                     </div>
+                                    {activated && totalDamage > 0 && (
+                                      <div style={{
+                                        position: "absolute",
+                                        right: 8,
+                                        top: 8,
+                                        background: "rgba(0,0,0,0.75)",
+                                        color: "#fff",
+                                        padding: "4px 6px",
+                                        borderRadius: 4,
+                                        fontWeight: 700,
+                                      }}>
+                                        -{totalDamage}
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -864,6 +926,110 @@ export default function App() {
               ) : (
                 <p className="muted">Roster data is not available.</p>
               )}
+            </div>
+
+            <div className="card">
+              <h2 className="card-title">Admin Panel</h2>
+              <p className="muted">Admin-only season management. Contract will reject non-admins.</p>
+              <div style={{ marginBottom: 8 }}>
+                <label>Season ID</label>
+                <input value={adminSeasonId} onChange={(e) => setAdminSeasonId(e.target.value)} />
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <label>Season Name</label>
+                <input value={adminSeasonName} onChange={(e) => setAdminSeasonName(e.target.value)} />
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <label>Roster JSON (array of UnitDef)</label>
+                <textarea
+                  value={adminRosterJson}
+                  onChange={(e) => setAdminRosterJson(e.target.value)}
+                  rows={4}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    setAdminMessage(null);
+                    try {
+                      const id = Number(adminSeasonId);
+                      const rosterParsed = adminRosterJson ? JSON.parse(adminRosterJson) : [];
+                      await createSeason(id, adminSeasonName || `Season ${id}`, rosterParsed);
+                      setAdminMessage("Season created (or call succeeded).");
+                      const newRoster = await getRoster();
+                      setRoster(newRoster);
+                    } catch (e: unknown) {
+                      setAdminMessage(e instanceof Error ? e.message : String(e));
+                    }
+                  }}
+                >
+                  Create Season
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={async () => {
+                    setAdminMessage(null);
+                    try {
+                      const id = Number(adminSeasonId);
+                      await setActiveSeason(id);
+                      setAdminMessage("Set active season.");
+                    } catch (e: unknown) {
+                      setAdminMessage(e instanceof Error ? e.message : String(e));
+                    }
+                  }}
+                >
+                  Set Active
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={async () => {
+                    setAdminMessage(null);
+                    try {
+                      const id = Number(adminSeasonId);
+                      await finishEditingSeason(id);
+                      setAdminMessage("Finished editing season.");
+                    } catch (e: unknown) {
+                      setAdminMessage(e instanceof Error ? e.message : String(e));
+                    }
+                  }}
+                >
+                  Finish Editing
+                </button>
+              </div>
+
+              <div style={{ marginBottom: 8 }}>
+                <label>Unit JSON (single UnitDef)</label>
+                <textarea
+                  value={adminUnitJson}
+                  onChange={(e) => setAdminUnitJson(e.target.value)}
+                  rows={3}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    setAdminMessage(null);
+                    try {
+                      const id = Number(adminSeasonId);
+                      const unit = adminUnitJson ? JSON.parse(adminUnitJson) : null;
+                      if (!unit) throw new Error("Unit JSON required");
+                      await addUnitToSeason(id, unit);
+                      setAdminMessage("Unit added to season.");
+                      const newRoster = await getRoster();
+                      setRoster(newRoster);
+                    } catch (e: unknown) {
+                      setAdminMessage(e instanceof Error ? e.message : String(e));
+                    }
+                  }}
+                >
+                  Add Unit
+                </button>
+              </div>
+              {adminMessage && <p style={{ marginTop: 8 }}>{adminMessage}</p>}
             </div>
           </>
         )}
