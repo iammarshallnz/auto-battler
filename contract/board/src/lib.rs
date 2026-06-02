@@ -527,6 +527,11 @@ impl BoardRegistry {
         self.players.get(&player.to_string()).cloned()
     }
 
+    pub fn am_i_admin(&self) -> bool {
+        assert_eq!(env::predecessor_account_id(), self.admin, "Admin only");
+        true
+    }
+
     // pub fn get_bazaar_offers(&self, player: AccountId) -> Vec<UnitUpgrade> {
     //     let state = self
     //         .players

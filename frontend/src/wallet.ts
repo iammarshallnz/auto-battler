@@ -183,6 +183,10 @@ export async function getRoster(): Promise<UnitDef[]> {
   return viewCall<UnitDef[]>(BOARD_CONTRACT_ID, "get_roster", {});
 }
 
+export async function amIAdmin(): Promise<boolean> {
+  return viewCall<boolean>(BOARD_CONTRACT_ID, "am_i_admin", {});
+}
+
 // Admin change calls
 export async function createSeason(
   id: number,

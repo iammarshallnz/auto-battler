@@ -7,6 +7,7 @@ import {
   getBoard,
   getRoster,
   getReadyPlayers,
+  amIAdmin,
   createSeason,
   setActiveSeason,
   finishEditingSeason,
@@ -21,12 +22,28 @@ import {
 } from "./wallet";
 
 function renderAbility(ability: unknown) {
-  if (typeof ability === "string") return ability;
+  if (typeof ability === "string") {
+    if (ability === "Cleanse") return "🧼 Cleanse";
+    if (ability === "None") return "⚪ None";
+    return ability;
+  }
   if (typeof ability !== "object" || ability === null)
     return JSON.stringify(ability);
   const [type, value] = Object.entries(ability)[0] ?? ["Unknown", null];
-  if (value === null) return type;
-  return `${type}: ${JSON.stringify(value)}`;
+  switch (type) {
+    case "Damage":
+      return `⚔️ Damage ${value?.amount ?? "?"}${value?.lifesteal ? " (lifesteal)" : ""}`;
+    case "Heal":
+      return `❤️ Heal ${value?.amount ?? "?"}`;
+    case "Shield":
+      return `🛡️ Shield ${value?.amount ?? "?"}`;
+    case "FireDot":
+      return `🔥 Fire over time ${value?.amount ?? "?"}`;
+    case "Stun":
+      return `💫 Stun ${value?.duration ?? "?"} for ${value?.amount_of_targets ?? "?"} target(s)`;
+    default:
+      return `${type}: ${JSON.stringify(value)}`;
+  }
 }
 
 function renderUpgrade(upgrade: UnitUpgrade) {
@@ -211,8 +228,12 @@ function computeBattleState(
       }
 
       // collect activated ids for UI highlighting and cooldowns for display
-      const activatedA = a_units.filter((u) => u.activated).map((u) => u.def_id);
-      const activatedB = b_units.filter((u) => u.activated).map((u) => u.def_id);
+      const activatedA = a_units
+        .filter((u) => u.activated)
+        .map((u) => u.def_id);
+      const activatedB = b_units
+        .filter((u) => u.activated)
+        .map((u) => u.def_id);
       const cooldownsA = a_units.map((u) => u.cooldown_remaining ?? 0);
       const cooldownsB = b_units.map((u) => u.cooldown_remaining ?? 0);
 
@@ -250,7 +271,9 @@ export default function App() {
   const [readyPlayers, setReadyPlayers] = useState<string[] | null>(null);
   const [battleLogs, setBattleLogs] = useState<string[]>([]);
   const [battleLoading, setBattleLoading] = useState<string | null>(null);
-  const [battleReplays, setBattleReplays] = useState<Record<string, BattleReplay>>({});
+  const [battleReplays, setBattleReplays] = useState<
+    Record<string, BattleReplay>
+  >({});
   const [currentReplay, setCurrentReplay] = useState<BattleReplay | null>(null);
   const [replayTick, setReplayTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -262,6 +285,7 @@ export default function App() {
   const [adminRosterJson, setAdminRosterJson] = useState<string>("");
   const [adminUnitJson, setAdminUnitJson] = useState<string>("");
   const [adminMessage, setAdminMessage] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   async function loadPlayerData(account: string) {
     setLoading(true);
@@ -270,10 +294,8 @@ export default function App() {
     try {
       // The contract may return either a full PlayerState, a PlayerStatus string, or null for new players.
       const current: any = await getCurrentState(account);
-      console.log(current)
-      if (
-        current === null || current.status === "Unregistered"
-      ) {
+      console.log(current);
+      if (current === null || current.status === "Unregistered") {
         setUnregistered(true);
         setPlayerState(null);
         setShop(null);
@@ -328,6 +350,8 @@ export default function App() {
         const id = await getAccountId();
         if (id) {
           setAccountId(id);
+          const admin = await amIAdmin().catch(() => false);
+          setIsAdmin(admin);
           await loadPlayerData(id);
           return;
         }
@@ -379,7 +403,7 @@ export default function App() {
     try {
       await rollSeed(1, "1");
       // Wait for transaction to be finalized on-chain
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
       await loadPlayerData(accountId);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Registration failed");
@@ -388,9 +412,8 @@ export default function App() {
     }
   }
 
-  const readyOpponentList = readyPlayers?.filter(
-    (opponent) => opponent !== accountId,
-  ) ?? [];
+  const readyOpponentList =
+    readyPlayers?.filter((opponent) => opponent !== accountId) ?? [];
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -522,7 +545,9 @@ export default function App() {
                                 onChange={() => {
                                   setSelectedShop((prev) => {
                                     if (prev.includes(item.id))
-                                      return prev.filter((id) => id !== item.id);
+                                      return prev.filter(
+                                        (id) => id !== item.id,
+                                      );
                                     if (prev.length >= 3) return prev;
                                     return [...prev, item.id];
                                   });
@@ -557,7 +582,9 @@ export default function App() {
                             try {
                               await lockBoard(selectedShop);
                               // Wait for transaction to be finalized on-chain
-                              await new Promise(resolve => setTimeout(resolve, 3000));
+                              await new Promise((resolve) =>
+                                setTimeout(resolve, 3000),
+                              );
                               // reload player data to reflect locked board
                               await loadPlayerData(accountId);
                               setSelectedShop([]);
@@ -589,7 +616,14 @@ export default function App() {
                 {readyOpponentList.length ? (
                   <ul>
                     {readyOpponentList.map((opponent) => (
-                      <li key={opponent} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <li
+                        key={opponent}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        }}
+                      >
                         <span>{opponent}</span>
                         <button
                           className="btn btn-primary"
@@ -600,14 +634,16 @@ export default function App() {
                             setBattleLoading(opponent);
                             try {
                               const result = await startBattle(opponent);
-                              const logs = parseBattleLogsFromTransaction(result);
+                              const logs =
+                                parseBattleLogsFromTransaction(result);
                               if (logs.length) {
                                 const battleLogJson = logs[0];
                                 // fetch both players' boards to build per-unit displays
-                                const [boardAState, boardBState] = await Promise.all([
-                                  getBoard(accountId),
-                                  getBoard(opponent),
-                                ]);
+                                const [boardAState, boardBState] =
+                                  await Promise.all([
+                                    getBoard(accountId),
+                                    getBoard(opponent),
+                                  ]);
                                 const boardAIds = boardAState?.board ?? [];
                                 const boardBIds = boardBState?.board ?? [];
                                 const replay = computeBattleState(
@@ -638,7 +674,9 @@ export default function App() {
                                   `Battle vs ${opponent}: no BATTLE_LOG returned`,
                                 ]);
                               }
-                              await new Promise((resolve) => setTimeout(resolve, 3000));
+                              await new Promise((resolve) =>
+                                setTimeout(resolve, 3000),
+                              );
                               await loadPlayerData(accountId);
                             } catch (e: unknown) {
                               setError(
@@ -677,19 +715,21 @@ export default function App() {
                 <h2 className="card-title">Battle Replays</h2>
                 {!currentReplay ? (
                   <ul>
-                    {Object.entries(battleReplays).map(([opponent, _replay]) => (
-                      <li key={opponent} style={{ marginBottom: "8px" }}>
-                        <button
-                          className="btn btn-primary"
-                          onClick={() => {
-                            setCurrentReplay(battleReplays[opponent]);
-                            setReplayTick(0);
-                          }}
-                        >
-                          View Battle vs {opponent}
-                        </button>
-                      </li>
-                    ))}
+                    {Object.entries(battleReplays).map(
+                      ([opponent, _replay]) => (
+                        <li key={opponent} style={{ marginBottom: "8px" }}>
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => {
+                              setCurrentReplay(battleReplays[opponent]);
+                              setReplayTick(0);
+                            }}
+                          >
+                            View Battle vs {opponent}
+                          </button>
+                        </li>
+                      ),
+                    )}
                   </ul>
                 ) : (
                   <div style={{ marginTop: "12px" }}>
@@ -700,26 +740,28 @@ export default function App() {
                     >
                       Back to Replays
                     </button>
-                    <div style={{ marginTop: "16px", display: "flex", gap: "8px" }}>
-                        <button
-                          className="btn btn-secondary"
-                          disabled={replayTick === 0}
-                          onClick={() => setReplayTick((t) => t - 1)}
-                        >
-                          Previous
-                        </button>
-                        <button
-                          className="btn btn-secondary"
-                          disabled={replayTick >= currentReplay.ticks.length - 1}
-                          onClick={() => setReplayTick((t) => t + 1)}
-                        >
-                          Next
-                        </button>
-                      </div>
+                    <div
+                      style={{ marginTop: "16px", display: "flex", gap: "8px" }}
+                    >
+                      <button
+                        className="btn btn-secondary"
+                        disabled={replayTick === 0}
+                        onClick={() => setReplayTick((t) => t - 1)}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        className="btn btn-secondary"
+                        disabled={replayTick >= currentReplay.ticks.length - 1}
+                        onClick={() => setReplayTick((t) => t + 1)}
+                      >
+                        Next
+                      </button>
+                    </div>
                     <div style={{ marginBottom: "16px" }}>
                       <p>
-                        <strong>Battle vs {currentReplay.opponent}</strong> — Tick{" "}
-                        {replayTick + 1} / {currentReplay.ticks.length}
+                        <strong>Battle vs {currentReplay.opponent}</strong> —
+                        Tick {replayTick + 1} / {currentReplay.ticks.length}
                       </p>
 
                       {currentReplay.ticks[replayTick] && (
@@ -731,55 +773,92 @@ export default function App() {
                             marginTop: "12px",
                           }}
                         >
-                          <div style={{ border: "1px solid #ccc", padding: "8px" }}>
+                          <div
+                            style={{ border: "1px solid #ccc", padding: "8px" }}
+                          >
                             <p>
                               <strong>Your Side (A)</strong>
                             </p>
-                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: "8px",
+                                flexWrap: "wrap",
+                              }}
+                            >
                               {(currentReplay.boardA ?? []).map((id, idx) => {
                                 const def = roster?.find((r) => r.id === id);
-                                const activated = currentReplay.ticks[replayTick]?.activatedA?.includes(id);
-                                const cd = currentReplay.ticks[replayTick]?.cooldownsA?.[idx];
+                                const activated =
+                                  currentReplay.ticks[
+                                    replayTick
+                                  ]?.activatedA?.includes(id);
+                                const cd =
+                                  currentReplay.ticks[replayTick]?.cooldownsA?.[
+                                    idx
+                                  ];
                                 // compute damage events for this unit this tick
-                                const damageEvents = (currentReplay.ticks[replayTick]?.events || []).filter(
-                                  (ev) => ev.side === true && ev.id === id && ev.ability?.Damage,
+                                const damageEvents = (
+                                  currentReplay.ticks[replayTick]?.events || []
+                                ).filter(
+                                  (ev) =>
+                                    ev.side === true &&
+                                    ev.id === id &&
+                                    ev.ability?.Damage,
                                 );
                                 const totalDamage = damageEvents.reduce(
-                                  (sum, ev) => sum + (ev.ability?.Damage?.amount ?? 0),
+                                  (sum, ev) =>
+                                    sum + (ev.ability?.Damage?.amount ?? 0),
                                   0,
                                 );
                                 return (
                                   <div
                                     key={id + "-a-" + idx}
                                     style={{
-                                      border: `2px solid ${activated ? "#4caf50" : "#ddd"}`,
+                                      border: `4px solid ${activated ? "#00ff08" : "#ddd"}`,
                                       padding: "8px",
                                       minWidth: "140px",
-                                      background: activated ? "#e8f5e9" : "#fff",
+                                      background: activated
+                                        ? "#428948"
+                                        : "#428948",
                                       position: "relative",
                                     }}
                                   >
-                                    <div style={{ fontWeight: 600 }}>{def?.name ?? `Unit ${id}`}</div>
-                                    <div style={{ fontSize: 12, color: "#555" }}>ID: {id}</div>
+                                    <div style={{ fontWeight: 600 }}>
+                                      {def?.name ?? `Unit ${id}`}
+                                    </div>
+                                    <div
+                                      style={{ fontSize: 12, color: "#555" }}
+                                    >
+                                      ID: {id}
+                                    </div>
                                     <div style={{ fontSize: 12 }}>
-                                      CD: <strong>{cd ?? def?.base_cooldown ?? "?"}</strong>
+                                      CD:{" "}
+                                      <strong>
+                                        {cd ?? def?.base_cooldown ?? "?"}
+                                      </strong>
                                     </div>
                                     <div style={{ fontSize: 12, marginTop: 6 }}>
-                                      {def?.abilitys?.slice(0, 2).map((a, i) => (
-                                        <div key={i} style={{ fontSize: 11 }}>{renderAbility(a)}</div>
-                                      ))}
+                                      {def?.abilitys
+                                        ?.slice(0, 2)
+                                        .map((a, i) => (
+                                          <div key={i} style={{ fontSize: 11 }}>
+                                            {renderAbility(a)}
+                                          </div>
+                                        ))}
                                     </div>
                                     {activated && totalDamage > 0 && (
-                                      <div style={{
-                                        position: "absolute",
-                                        right: 8,
-                                        top: 8,
-                                        background: "rgba(0,0,0,0.75)",
-                                        color: "#fff",
-                                        padding: "4px 6px",
-                                        borderRadius: 4,
-                                        fontWeight: 700,
-                                      }}>
+                                      <div
+                                        style={{
+                                          position: "absolute",
+                                          right: 8,
+                                          top: 8,
+                                          background: "#c8e6c9",
+                                          color: "#1b5e20",
+                                          padding: "4px 6px",
+                                          borderRadius: 4,
+                                          fontWeight: 700,
+                                        }}
+                                      >
                                         -{totalDamage}
                                       </div>
                                     )}
@@ -790,65 +869,111 @@ export default function App() {
 
                             <div style={{ marginTop: 8 }}>
                               <p>
-                                HP: <strong>{currentReplay.ticks[replayTick].a_health}</strong>
+                                HP:{" "}
+                                <strong>
+                                  {currentReplay.ticks[replayTick].a_health}
+                                </strong>
                               </p>
                               <p>
-                                Shield: <strong>{currentReplay.ticks[replayTick].a_shield}</strong>
+                                Shield:{" "}
+                                <strong>
+                                  {currentReplay.ticks[replayTick].a_shield}
+                                </strong>
                               </p>
                               <p>
-                                Fire: <strong>{currentReplay.ticks[replayTick].a_fire}</strong>
+                                Fire:{" "}
+                                <strong>
+                                  {currentReplay.ticks[replayTick].a_fire}
+                                </strong>
                               </p>
                             </div>
                           </div>
 
-                          <div style={{ border: "1px solid #ccc", padding: "8px" }}>
+                          <div
+                            style={{ border: "1px solid #ccc", padding: "8px" }}
+                          >
                             <p>
                               <strong>Opponent (B)</strong>
                             </p>
-                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: "8px",
+                                flexWrap: "wrap",
+                              }}
+                            >
                               {(currentReplay.boardB ?? []).map((id, idx) => {
                                 const def = roster?.find((r) => r.id === id);
-                                const activated = currentReplay.ticks[replayTick]?.activatedB?.includes(id);
-                                const cd = currentReplay.ticks[replayTick]?.cooldownsB?.[idx];
-                                const damageEvents = (currentReplay.ticks[replayTick]?.events || []).filter(
-                                  (ev) => ev.side === false && ev.id === id && ev.ability?.Damage,
+                                const activated =
+                                  currentReplay.ticks[
+                                    replayTick
+                                  ]?.activatedB?.includes(id);
+                                const cd =
+                                  currentReplay.ticks[replayTick]?.cooldownsB?.[
+                                    idx
+                                  ];
+                                const damageEvents = (
+                                  currentReplay.ticks[replayTick]?.events || []
+                                ).filter(
+                                  (ev) =>
+                                    ev.side === false &&
+                                    ev.id === id &&
+                                    ev.ability?.Damage,
                                 );
                                 const totalDamage = damageEvents.reduce(
-                                  (sum, ev) => sum + (ev.ability?.Damage?.amount ?? 0),
+                                  (sum, ev) =>
+                                    sum + (ev.ability?.Damage?.amount ?? 0),
                                   0,
                                 );
                                 return (
                                   <div
                                     key={id + "-b-" + idx}
                                     style={{
-                                      border: `2px solid ${activated ? "#f44336" : "#ddd"}`,
+                                      border: `4px solid ${activated ? "#f81505" : "#ddd"}`,
                                       padding: "8px",
                                       minWidth: "140px",
-                                      background: activated ? "#ffebee" : "#fff",
+                                      background: activated
+                                        ? "#672b34"
+                                        : "#672b34",
                                       position: "relative",
                                     }}
                                   >
-                                    <div style={{ fontWeight: 600 }}>{def?.name ?? `Unit ${id}`}</div>
-                                    <div style={{ fontSize: 12, color: "#555" }}>ID: {id}</div>
+                                    <div style={{ fontWeight: 600 }}>
+                                      {def?.name ?? `Unit ${id}`}
+                                    </div>
+                                    <div
+                                      style={{ fontSize: 12, color: "#555" }}
+                                    >
+                                      ID: {id}
+                                    </div>
                                     <div style={{ fontSize: 12 }}>
-                                      CD: <strong>{cd ?? def?.base_cooldown ?? "?"}</strong>
+                                      CD:{" "}
+                                      <strong>
+                                        {cd ?? def?.base_cooldown ?? "?"}
+                                      </strong>
                                     </div>
                                     <div style={{ fontSize: 12, marginTop: 6 }}>
-                                      {def?.abilitys?.slice(0, 2).map((a, i) => (
-                                        <div key={i} style={{ fontSize: 11 }}>{renderAbility(a)}</div>
-                                      ))}
+                                      {def?.abilitys
+                                        ?.slice(0, 2)
+                                        .map((a, i) => (
+                                          <div key={i} style={{ fontSize: 11 }}>
+                                            {renderAbility(a)}
+                                          </div>
+                                        ))}
                                     </div>
                                     {activated && totalDamage > 0 && (
-                                      <div style={{
-                                        position: "absolute",
-                                        right: 8,
-                                        top: 8,
-                                        background: "rgba(0,0,0,0.75)",
-                                        color: "#fff",
-                                        padding: "4px 6px",
-                                        borderRadius: 4,
-                                        fontWeight: 700,
-                                      }}>
+                                      <div
+                                        style={{
+                                          position: "absolute",
+                                          right: 8,
+                                          top: 8,
+                                          background: "#ffcdd2",
+                                          color: "#b71c1c",
+                                          padding: "4px 6px",
+                                          borderRadius: 4,
+                                          fontWeight: 700,
+                                        }}
+                                      >
                                         -{totalDamage}
                                       </div>
                                     )}
@@ -859,13 +984,22 @@ export default function App() {
 
                             <div style={{ marginTop: 8 }}>
                               <p>
-                                HP: <strong>{currentReplay.ticks[replayTick].b_health}</strong>
+                                HP:{" "}
+                                <strong>
+                                  {currentReplay.ticks[replayTick].b_health}
+                                </strong>
                               </p>
                               <p>
-                                Shield: <strong>{currentReplay.ticks[replayTick].b_shield}</strong>
+                                Shield:{" "}
+                                <strong>
+                                  {currentReplay.ticks[replayTick].b_shield}
+                                </strong>
                               </p>
                               <p>
-                                Fire: <strong>{currentReplay.ticks[replayTick].b_fire}</strong>
+                                Fire:{" "}
+                                <strong>
+                                  {currentReplay.ticks[replayTick].b_fire}
+                                </strong>
                               </p>
                             </div>
                           </div>
@@ -882,36 +1016,19 @@ export default function App() {
                               (event, idx) => (
                                 <li key={idx}>
                                   Unit {event.id} (
-                                  {event.side ? "Your Side" : "Opponent"}): 
+                                  {event.side ? "Your Side" : "Opponent"}):
                                   {renderAbility(event.ability)}
                                 </li>
-                              )
+                              ),
                             )}
                           </ul>
                         </div>
                       )}
-
-                      
                     </div>
                   </div>
                 )}
               </div>
             )}
-
-            {/* <div className="card">
-              <h2 className="card-title">Bazaar Offers</h2>
-              {bazaarOffers?.length ? (
-                <ul>
-                  {bazaarOffers.map((offer, index) => (
-                    <li key={index}>
-                      Unit ID: {offer.unit_id} — {renderUpgrade(offer)}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="muted">No bazaar offers available.</p>
-              )}
-            </div> */}
 
             <div className="card">
               <h2 className="card-title">Unit Roster</h2>
@@ -928,109 +1045,135 @@ export default function App() {
               )}
             </div>
 
-            <div className="card">
-              <h2 className="card-title">Admin Panel</h2>
-              <p className="muted">Admin-only season management. Contract will reject non-admins.</p>
-              <div style={{ marginBottom: 8 }}>
-                <label>Season ID</label>
-                <input value={adminSeasonId} onChange={(e) => setAdminSeasonId(e.target.value)} />
-              </div>
-              <div style={{ marginBottom: 8 }}>
-                <label>Season Name</label>
-                <input value={adminSeasonName} onChange={(e) => setAdminSeasonName(e.target.value)} />
-              </div>
-              <div style={{ marginBottom: 8 }}>
-                <label>Roster JSON (array of UnitDef)</label>
-                <textarea
-                  value={adminRosterJson}
-                  onChange={(e) => setAdminRosterJson(e.target.value)}
-                  rows={4}
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <button
-                  className="btn btn-primary"
-                  onClick={async () => {
-                    setAdminMessage(null);
-                    try {
-                      const id = Number(adminSeasonId);
-                      const rosterParsed = adminRosterJson ? JSON.parse(adminRosterJson) : [];
-                      await createSeason(id, adminSeasonName || `Season ${id}`, rosterParsed);
-                      setAdminMessage("Season created (or call succeeded).");
-                      const newRoster = await getRoster();
-                      setRoster(newRoster);
-                    } catch (e: unknown) {
-                      setAdminMessage(e instanceof Error ? e.message : String(e));
-                    }
-                  }}
-                >
-                  Create Season
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={async () => {
-                    setAdminMessage(null);
-                    try {
-                      const id = Number(adminSeasonId);
-                      await setActiveSeason(id);
-                      setAdminMessage("Set active season.");
-                    } catch (e: unknown) {
-                      setAdminMessage(e instanceof Error ? e.message : String(e));
-                    }
-                  }}
-                >
-                  Set Active
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={async () => {
-                    setAdminMessage(null);
-                    try {
-                      const id = Number(adminSeasonId);
-                      await finishEditingSeason(id);
-                      setAdminMessage("Finished editing season.");
-                    } catch (e: unknown) {
-                      setAdminMessage(e instanceof Error ? e.message : String(e));
-                    }
-                  }}
-                >
-                  Finish Editing
-                </button>
-              </div>
+            {isAdmin && (
+              <div className="card">
+                <h2 className="card-title">Admin Panel</h2>
+                <p className="muted">
+                  Admin-only season management. Contract will reject non-admins.
+                </p>
+                <div style={{ marginBottom: 8 }}>
+                  <label>Season ID</label>
+                  <input
+                    value={adminSeasonId}
+                    onChange={(e) => setAdminSeasonId(e.target.value)}
+                  />
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  <label>Season Name</label>
+                  <input
+                    value={adminSeasonName}
+                    onChange={(e) => setAdminSeasonName(e.target.value)}
+                  />
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  <label>Roster JSON (array of UnitDef)</label>
+                  <textarea
+                    value={adminRosterJson}
+                    onChange={(e) => setAdminRosterJson(e.target.value)}
+                    rows={4}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={async () => {
+                      setAdminMessage(null);
+                      try {
+                        const id = Number(adminSeasonId);
+                        const rosterParsed = adminRosterJson
+                          ? JSON.parse(adminRosterJson)
+                          : [];
+                        await createSeason(
+                          id,
+                          adminSeasonName || `Season ${id}`,
+                          rosterParsed,
+                        );
+                        setAdminMessage("Season created (or call succeeded).");
+                        const newRoster = await getRoster();
+                        setRoster(newRoster);
+                      } catch (e: unknown) {
+                        setAdminMessage(
+                          e instanceof Error ? e.message : String(e),
+                        );
+                      }
+                    }}
+                  >
+                    Create Season
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={async () => {
+                      setAdminMessage(null);
+                      try {
+                        const id = Number(adminSeasonId);
+                        await setActiveSeason(id);
+                        setAdminMessage("Set active season.");
+                      } catch (e: unknown) {
+                        setAdminMessage(
+                          e instanceof Error ? e.message : String(e),
+                        );
+                      }
+                    }}
+                  >
+                    Set Active
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={async () => {
+                      setAdminMessage(null);
+                      try {
+                        const id = Number(adminSeasonId);
+                        await finishEditingSeason(id);
+                        setAdminMessage("Finished editing season.");
+                      } catch (e: unknown) {
+                        setAdminMessage(
+                          e instanceof Error ? e.message : String(e),
+                        );
+                      }
+                    }}
+                  >
+                    Finish Editing
+                  </button>
+                </div>
 
-              <div style={{ marginBottom: 8 }}>
-                <label>Unit JSON (single UnitDef)</label>
-                <textarea
-                  value={adminUnitJson}
-                  onChange={(e) => setAdminUnitJson(e.target.value)}
-                  rows={3}
-                  style={{ width: "100%" }}
-                />
+                <div style={{ marginBottom: 8 }}>
+                  <label>Unit JSON (single UnitDef)</label>
+                  <textarea
+                    value={adminUnitJson}
+                    onChange={(e) => setAdminUnitJson(e.target.value)}
+                    rows={3}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={async () => {
+                      setAdminMessage(null);
+                      try {
+                        const id = Number(adminSeasonId);
+                        const unit = adminUnitJson
+                          ? JSON.parse(adminUnitJson)
+                          : null;
+                        if (!unit) throw new Error("Unit JSON required");
+                        await addUnitToSeason(id, unit);
+                        setAdminMessage("Unit added to season.");
+                        const newRoster = await getRoster();
+                        setRoster(newRoster);
+                      } catch (e: unknown) {
+                        setAdminMessage(
+                          e instanceof Error ? e.message : String(e),
+                        );
+                      }
+                    }}
+                  >
+                    Add Unit
+                  </button>
+                </div>
+                {adminMessage && <p style={{ marginTop: 8 }}>{adminMessage}</p>}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  className="btn btn-primary"
-                  onClick={async () => {
-                    setAdminMessage(null);
-                    try {
-                      const id = Number(adminSeasonId);
-                      const unit = adminUnitJson ? JSON.parse(adminUnitJson) : null;
-                      if (!unit) throw new Error("Unit JSON required");
-                      await addUnitToSeason(id, unit);
-                      setAdminMessage("Unit added to season.");
-                      const newRoster = await getRoster();
-                      setRoster(newRoster);
-                    } catch (e: unknown) {
-                      setAdminMessage(e instanceof Error ? e.message : String(e));
-                    }
-                  }}
-                >
-                  Add Unit
-                </button>
-              </div>
-              {adminMessage && <p style={{ marginTop: 8 }}>{adminMessage}</p>}
-            </div>
+            )}
           </>
         )}
       </main>
