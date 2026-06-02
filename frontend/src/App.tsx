@@ -65,6 +65,10 @@ interface BattleTickState {
   activatedB?: number[];
   cooldownsA?: number[];
   cooldownsB?: number[];
+  stunsA?: number[];
+  stunsB?: number[];
+  targetsA?: number[];
+  targetsB?: number[];
 }
 
 interface BattleReplay {
@@ -150,6 +154,8 @@ function computeBattleState(
     for (const rawTick of rawTicks) {
       const tick = rawTick.tick ?? 0;
       const events = rawTick.events ?? [];
+      const targetsA_this_tick: number[] = [];
+      const targetsB_this_tick: number[] = [];
 
       // Reset activated flags
       for (const u of a_units) u.activated = false;
@@ -159,12 +165,13 @@ function computeBattleState(
       for (const side of ["a", "b"] as const) {
         const units = side === "a" ? a_units : b_units;
         for (const unit of units) {
-          if (unit.cooldown_remaining > 0) {
-            if (unit.stunned > 0) {
-              unit.stunned -= 1;
-            } else {
-              unit.cooldown_remaining -= 1;
-            }
+          if (unit.stunned > 0) {
+            // stunned units skip actions and decrement stun
+            unit.stunned = Math.max(0, unit.stunned - 1);
+            // ensure cooldown resets while stunned so they don't fire immediately
+            unit.cooldown_remaining = unit.base_cooldown;
+          } else if (unit.cooldown_remaining > 0) {
+            unit.cooldown_remaining -= 1;
           } else {
             // This unit will act this tick (contract sets cooldown after action)
             unit.activated = true;
@@ -180,6 +187,7 @@ function computeBattleState(
 
         // Find matching unit instance to highlight (first match of def_id)
         const units = side ? a_units : b_units;
+        const targetUnits = side ? b_units : a_units;
         const unit = units.find((u) => u.def_id === event.id);
         if (unit) unit.activated = true;
 
@@ -211,6 +219,36 @@ function computeBattleState(
         } else if (ability?.Cleanse) {
           if (side) a_fire = 0;
           else b_fire = 0;
+        } else if (ability?.Stun) {
+          const { duration, amount_of_targets } = ability.Stun;
+          // Prefer exact targets from the event log if present
+          const evtTargets = event.target;
+          if (Array.isArray(evtTargets) && evtTargets.length > 0) {
+            for (const rawIdx of evtTargets) {
+              const idx = Number(rawIdx);
+              const t = targetUnits[idx];
+              if (t) t.stunned = Math.max(t.stunned ?? 0, duration ?? 1);
+              // record target index for UI highlighting
+              if (side) {
+                // side true = A fired -> targets are B indices
+                targetsB_this_tick.push(idx);
+              } else {
+                targetsA_this_tick.push(idx);
+              }
+            }
+          } else {
+            // fallback: apply stun to first N target units (best-effort)
+            const targets = targetUnits.filter(() => true);
+            for (let i = 0; i < (amount_of_targets ?? 1); i++) {
+              const t = targets[i];
+              if (t) t.stunned = Math.max(t.stunned ?? 0, duration ?? 1);
+              if (side) {
+                targetsB_this_tick.push(i);
+              } else {
+                targetsA_this_tick.push(i);
+              }
+            }
+          }
         }
       }
 
@@ -235,7 +273,9 @@ function computeBattleState(
         .filter((u) => u.activated)
         .map((u) => u.def_id);
       const cooldownsA = a_units.map((u) => u.cooldown_remaining ?? 0);
+      const stunsA = a_units.map((u) => u.stunned ?? 0);
       const cooldownsB = b_units.map((u) => u.cooldown_remaining ?? 0);
+      const stunsB = b_units.map((u) => u.stunned ?? 0);
 
       ticks.push({
         tick,
@@ -250,6 +290,10 @@ function computeBattleState(
         activatedB,
         cooldownsA,
         cooldownsB,
+        stunsA,
+        stunsB,
+        targetsA: targetsA_this_tick,
+        targetsB: targetsB_this_tick,
       });
     }
 
@@ -295,7 +339,6 @@ export default function App() {
       
       // The contract may return either a full PlayerState, a PlayerStatus string, or null for new players.
       const current: any = await getCurrentState(account);
-      console.log(current);
       if (current === null || current.status === "Unregistered") {
         setUnregistered(true);
         setPlayerState(null);
@@ -352,7 +395,6 @@ export default function App() {
         if (id) {
           setAccountId(id);
           const admin = await amIAdmin();
-          console.log(admin)
           setIsAdmin(admin);
           await loadPlayerData(id);
           return;
@@ -867,6 +909,39 @@ export default function App() {
                                         {totalDamage}
                                       </div>
                                     )}
+                                    {(currentReplay.ticks[replayTick]?.targetsA || []).includes(idx) && (
+                                      <div
+                                        style={{
+                                          position: "absolute",
+                                          right: 8,
+                                          bottom: 8,
+                                          background: "#ff9800",
+                                          color: "#fff",
+                                          padding: "2px 6px",
+                                          borderRadius: 4,
+                                          fontWeight: 700,
+                                          fontSize: 12,
+                                        }}
+                                      >
+                                        TARGET
+                                      </div>
+                                    )}
+                                    {(currentReplay.ticks[replayTick]?.stunsA?.[idx] ?? 0) > 0 && (
+                                      <div
+                                        style={{
+                                          position: "absolute",
+                                          left: 8,
+                                          top: 8,
+                                          background: "#ffeb3b",
+                                          color: "#000",
+                                          padding: "2px 6px",
+                                          borderRadius: 4,
+                                          fontWeight: 700,
+                                        }}
+                                      >
+                                        💫 {currentReplay.ticks[replayTick].stunsA?.[idx]}
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -980,6 +1055,39 @@ export default function App() {
                                         }}
                                       >
                                         {totalDamage}
+                                      </div>
+                                    )}
+                                    {(currentReplay.ticks[replayTick]?.stunsB?.[idx] ?? 0) > 0 && (
+                                      <div
+                                        style={{
+                                          position: "absolute",
+                                          left: 8,
+                                          top: 8,
+                                          background: "#ffeb3b",
+                                          color: "#000",
+                                          padding: "2px 6px",
+                                          borderRadius: 4,
+                                          fontWeight: 700,
+                                        }}
+                                      >
+                                        💫 {currentReplay.ticks[replayTick].stunsB?.[idx]}
+                                      </div>
+                                    )}
+                                    {(currentReplay.ticks[replayTick]?.targetsB || []).includes(idx) && (
+                                      <div
+                                        style={{
+                                          position: "absolute",
+                                          right: 8,
+                                          bottom: 8,
+                                          background: "#ff9800",
+                                          color: "#fff",
+                                          padding: "2px 6px",
+                                          borderRadius: 4,
+                                          fontWeight: 700,
+                                          fontSize: 12,
+                                        }}
+                                      >
+                                        TARGET
                                       </div>
                                     )}
                                   </div>

@@ -42,7 +42,7 @@ pub struct CommitEntry {
 pub struct AbilityEvent {
     pub id: u8, // def_id
     pub ability: Ability,
-    pub target: Option<u8>, // def_id of target for stun
+    pub target: Option<Vec<u8>>, // def_id(s) of target(s) for stun
     pub side: bool,         // true = board_a fired, false = board_b fired
 }
 
@@ -403,21 +403,23 @@ impl GameContract {
                                 duration,
                                 amount_of_targets,
                             } => {
+                                let mut targets_vec: Vec<u8> = Vec::new();
                                 for target in 0..amount_of_targets {
                                     let i = (battle.tick as usize + target as usize) % 32;
                                     let random_number = battle.random_seed[i] % 3;
                                     def_units[random_number as usize].stunned += duration;
-
-                                    events.push(AbilityEvent {
-                                        id: unit.def_id,
-                                        ability: Ability::Stun {
-                                            duration,
-                                            amount_of_targets,
-                                        },
-                                        target: Some(target),
-                                        side,
-                                    });
+                                    targets_vec.push(random_number);
                                 }
+
+                                events.push(AbilityEvent {
+                                    id: unit.def_id,
+                                    ability: Ability::Stun {
+                                        duration,
+                                        amount_of_targets,
+                                    },
+                                    target: Some(targets_vec),
+                                    side,
+                                });
                             }
                             Ability::Cleanse => {
                                 *atk_fire = 0;
