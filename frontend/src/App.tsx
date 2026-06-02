@@ -292,6 +292,8 @@ export default function App() {
     setError(null);
 
     try {
+      const admin = await amIAdmin().catch(() => false);
+      setIsAdmin(admin);
       // The contract may return either a full PlayerState, a PlayerStatus string, or null for new players.
       const current: any = await getCurrentState(account);
       console.log(current);
@@ -859,7 +861,7 @@ export default function App() {
                                           fontWeight: 700,
                                         }}
                                       >
-                                        -{totalDamage}
+                                        {totalDamage}
                                       </div>
                                     )}
                                   </div>
@@ -974,7 +976,7 @@ export default function App() {
                                           fontWeight: 700,
                                         }}
                                       >
-                                        -{totalDamage}
+                                        {totalDamage}
                                       </div>
                                     )}
                                   </div>
@@ -1175,7 +1177,7 @@ export default function App() {
               </div>
             )}
           </>
-        )}
+        )} 
       </main>
     </div>
   );
