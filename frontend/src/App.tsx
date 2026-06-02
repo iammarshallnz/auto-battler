@@ -909,23 +909,7 @@ export default function App() {
                                         {totalDamage}
                                       </div>
                                     )}
-                                    {(currentReplay.ticks[replayTick]?.targetsA || []).includes(idx) && (
-                                      <div
-                                        style={{
-                                          position: "absolute",
-                                          right: 8,
-                                          bottom: 8,
-                                          background: "#ff9800",
-                                          color: "#fff",
-                                          padding: "2px 6px",
-                                          borderRadius: 4,
-                                          fontWeight: 700,
-                                          fontSize: 12,
-                                        }}
-                                      >
-                                        TARGET
-                                      </div>
-                                    )}
+                                    
                                     {(currentReplay.ticks[replayTick]?.stunsA?.[idx] ?? 0) > 0 && (
                                       <div
                                         style={{
