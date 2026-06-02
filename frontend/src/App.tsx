@@ -285,15 +285,14 @@ export default function App() {
   const [adminRosterJson, setAdminRosterJson] = useState<string>("");
   const [adminUnitJson, setAdminUnitJson] = useState<string>("");
   const [adminMessage, setAdminMessage] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState<string>("");
 
   async function loadPlayerData(account: string) {
     setLoading(true);
     setError(null);
 
     try {
-      const admin = await amIAdmin().catch(() => false);
-      setIsAdmin(admin);
+      
       // The contract may return either a full PlayerState, a PlayerStatus string, or null for new players.
       const current: any = await getCurrentState(account);
       console.log(current);
@@ -352,7 +351,8 @@ export default function App() {
         const id = await getAccountId();
         if (id) {
           setAccountId(id);
-          const admin = await amIAdmin().catch(() => false);
+          const admin = await amIAdmin();
+          console.log(admin)
           setIsAdmin(admin);
           await loadPlayerData(id);
           return;
@@ -376,6 +376,8 @@ export default function App() {
         if (id) {
           clearInterval(interval);
           setAccountId(id);
+          const admin = await amIAdmin();
+          setIsAdmin(admin);
           await loadPlayerData(id);
         }
       }
@@ -394,6 +396,7 @@ export default function App() {
     setSelectedShop([]);
     setUnregistered(false);
     setError(null);
+    setIsAdmin("");
     setLoading(false);
   }
 
@@ -1047,7 +1050,7 @@ export default function App() {
               )}
             </div>
 
-            {isAdmin && (
+            {isAdmin === accountId && (
               <div className="card">
                 <h2 className="card-title">Admin Panel</h2>
                 <p className="muted">

@@ -70,7 +70,6 @@ export async function viewCall<T>(
   const bytes = new Uint8Array((result as { result: number[] }).result);
 
   const decodedString = new TextDecoder().decode(bytes);
-
   return JSON.parse(decodedString) as T;
 }
 
@@ -183,8 +182,9 @@ export async function getRoster(): Promise<UnitDef[]> {
   return viewCall<UnitDef[]>(BOARD_CONTRACT_ID, "get_roster", {});
 }
 
-export async function amIAdmin(): Promise<boolean> {
-  return viewCall<boolean>(BOARD_CONTRACT_ID, "am_i_admin", {});
+export async function amIAdmin(): Promise<string> {
+   return viewCall<string>(BOARD_CONTRACT_ID, "am_i_admin", {});
+   
 }
 
 // Admin change calls
