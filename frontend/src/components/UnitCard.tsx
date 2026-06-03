@@ -85,11 +85,11 @@ export function UnitCard({ id, idx, def, tick, side }: Props) {
             fontWeight: 700,
           }}
         >
-          💫 {stun}
+          💫 {stun} 
         </div>
       )}
 
-      {isTarget && (
+      {/* {isTarget && (
         <div
           style={{
             position: "absolute",
@@ -105,7 +105,7 @@ export function UnitCard({ id, idx, def, tick, side }: Props) {
         >
           TARGET
         </div>
-      )}
+      )} */}
     </div>
   );
 }

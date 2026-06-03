@@ -1,6 +1,6 @@
 import type { UnitDef, UnitUpgrade } from "../types";
 
-// ── Types ──────────────────────────────────────────────────────────────────
+//  Types 
 
 export interface BattleTickState {
   tick: number;
@@ -28,8 +28,8 @@ export interface BattleReplay {
   boardB?: number[];
 }
 
-// ── Render helpers ─────────────────────────────────────────────────────────
-
+//  Render helpers 
+// AI helped make this look nice 
 export function renderAbility(ability: unknown): string {
   if (typeof ability === "string") {
     if (ability === "Cleanse") return "🧼 Cleanse";
@@ -61,7 +61,7 @@ export function renderUpgrade(upgrade: UnitUpgrade): string {
   return `${type}: ${JSON.stringify(value)}`;
 }
 
-// ── Log parsing ────────────────────────────────────────────────────────────
+//  Log parsing 
 
 export function parseBattleLogsFromTransaction(result: any): string[] {
   const logs: string[] = [];
@@ -96,8 +96,8 @@ export function parseBattleLogsFromTransaction(result: any): string[] {
     .map((log) => log.slice("BATTLE_LOG:".length));
 }
 
-// ── Replay computation ─────────────────────────────────────────────────────
-
+//  Replay computation 
+//  COPY FROM THE CONTRACT
 export function computeBattleState(
   battleLogJson: string,
   opponent: string,

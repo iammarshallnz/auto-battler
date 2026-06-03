@@ -109,7 +109,7 @@ export default function App() {
     init();
   }, []);
 
-  // ── Wallet handlers ────────────────────────────────────────────────────────
+  //  Wallet handlers 
 
   async function handleConnect() {
     showModal();
@@ -157,7 +157,7 @@ export default function App() {
     }
   }
 
-  // ── Shop handlers ──────────────────────────────────────────────────────────
+  //  Shop handlers 
 
   function handleShopToggle(id: number) {
     setSelectedShop((prev) => {
@@ -182,7 +182,7 @@ export default function App() {
     }
   }
 
-  // ── Battle handler ─────────────────────────────────────────────────────────
+  //  Battle handler
 
   async function handleBattle(opponent: string) {
     if (!accountId) return;
@@ -230,7 +230,7 @@ export default function App() {
     }
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  //  Render 
 
   const readyOpponentList =
     readyPlayers?.filter((p) => p !== accountId) ?? [];
