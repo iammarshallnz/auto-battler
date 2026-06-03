@@ -271,9 +271,9 @@ impl BoardRegistry {
 
         state.board = Some(chosen_ids);
         state.status = PlayerStatus::Ready;
-        if let None = self.ready_players.iter().find(|x| **x == player) {
-            self.ready_players.push(player.clone()); // add to vec of player ready
-        }
+        
+        self.ready_players.push(player.clone()); // add to vec of player ready
+        
         
         self.players.insert(key, state);
         env::log_str(&format!("{} locked their board — Ready", player));
@@ -424,8 +424,10 @@ impl BoardRegistry {
 
             // Send payout if they won at least 1
             if payout.as_yoctonear() > 0 {
-                let _ = Promise::new(AccountId::try_from(player).unwrap()).transfer(payout);
+                let _ = Promise::new(AccountId::try_from(player.clone()).unwrap()).transfer(payout);
             }
+            self.ready_players.retain(|x| *x != player);
+
         } else {
             // Not finished yet — just update state
             self.players.insert(player.to_string(), state);
