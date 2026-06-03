@@ -13,6 +13,7 @@ Install [`cargo-near`](https://github.com/near/cargo-near) and run:
 
 ```bash
 
+// YOUR OWN TESTNET ACCOUNTS GO HERE 
 export ACCOUNT_ID=autobattletest.testnet
 export BOARD_ID=autobattleboard.testnet
 export BATTLE_ID=autobattlebattle.testnet
