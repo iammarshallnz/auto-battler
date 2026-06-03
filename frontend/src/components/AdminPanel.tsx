@@ -1,103 +1,129 @@
-import { useState } from 'react'
-import { finalise, withdraw } from '../wallet'
- 
+import { useState } from "react";
+import {
+  createSeason,
+  setActiveSeason,
+  finishEditingSeason,
+  addUnitToSeason,
+  getRoster,
+} from "../wallet";
+import type { UnitDef } from "../types";
+
 interface Props {
-  auctionEnded: boolean
-  onAction:     () => void
+  onRosterUpdate: (roster: UnitDef[]) => void;
 }
- 
-export default function AdminPanel({ auctionEnded, onAction }: Props) {
-  const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
- 
-  async function handleFinalise() {
-    setMessage(null)
-    setLoading(true)
+
+export function AdminPanel({ onRosterUpdate }: Props) {
+  const [seasonId, setSeasonId] = useState("");
+  const [seasonName, setSeasonName] = useState("");
+  const [rosterJson, setRosterJson] = useState("");
+  const [unitJson, setUnitJson] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function withMessage(fn: () => Promise<string>) {
+    setMessage(null);
     try {
-      // TODO:
-      // Call finalise()
-      // This triggers a cross-contract NFT transfer to the winner.
-      // The transaction may take a few seconds to complete.
-      // After success:
-      //   setMessage('Auction finalised — NFT transferred to winner.')
-      //   onAction()
-      await finalise()
-      setMessage('Auction finalised — NFT transferred to winner.')
-      onAction()
+      setMessage(await fn());
     } catch (e: unknown) {
-      setMessage(e instanceof Error ? e.message : 'Finalise failed')
-    } finally {
-      setLoading(false)
+      setMessage(e instanceof Error ? e.message : String(e));
     }
   }
- 
-  async function handleWithdrawProceeds() {
-    setMessage(null)
-    setLoading(true)
-    try {
-      // TODO:
-      // Call withdraw() — the contract detects the caller is admin and
-      // sends the winning bid amount via a cross-contract FT transfer.
-      // After success:
-      //   setMessage('Proceeds withdrawn successfully.')
-      //   onAction()
-      await withdraw()
-      setMessage('Proceeds withdrawn successfully.')
-      onAction()
-    } catch (e: unknown) {
-      setMessage(e instanceof Error ? e.message : 'Withdrawal failed')
-    } finally {
-      setLoading(false)
-    }
-  }
- 
+
   return (
-    <div className="card admin-panel">
-      <h2 className="card-title">⚙️ Admin</h2>
- 
-      {!auctionEnded ? (
-        <p className="muted">
-          Admin actions are available after the auction ends.
-        </p>
-      ) : (
-        <div className="admin-actions">
-          <div className="admin-action">
-            <div>
-              <strong>Finalise auction</strong>
-              <p className="hint">
-                Transfers the prize NFT to the winner via a cross-contract call.
-                Do this before withdrawing proceeds.
-              </p>
-            </div>
-            <button
-              className="btn btn-primary"
-              onClick={handleFinalise}
-              disabled={loading}
-            >
-              {loading ? 'Processing…' : 'Finalise'}
-            </button>
-          </div>
- 
-          <div className="admin-action">
-            <div>
-              <strong>Withdraw proceeds</strong>
-              <p className="hint">
-                Transfers the winning bid amount to your account via the FT contract.
-                Only available after finalising.
-              </p>
-            </div>
-            <button
-              className="btn btn-secondary"
-              onClick={handleWithdrawProceeds}
-              disabled={loading}
-            >
-              {loading ? 'Processing…' : 'Withdraw proceeds'}
-            </button>
-          </div>
-        </div>
-      )}
- 
-      {message && <p className="result">{message}</p>}
+    <div className="card">
+      <h2 className="card-title">Admin Panel</h2>
+      <p className="muted">
+        Admin-only season management. Contract will reject non-admins.
+      </p>
+
+      <div style={{ marginBottom: 8 }}>
+        <label>Season ID</label>
+        <input value={seasonId} onChange={(e) => setSeasonId(e.target.value)} />
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <label>Season Name</label>
+        <input
+          value={seasonName}
+          onChange={(e) => setSeasonName(e.target.value)}
+        />
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <label>Roster JSON (array of UnitDef)</label>
+        <textarea
+          value={rosterJson}
+          onChange={(e) => setRosterJson(e.target.value)}
+          rows={4}
+          style={{ width: "100%" }}
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button
+          className="btn btn-primary"
+          onClick={() =>
+            withMessage(async () => {
+              const id = Number(seasonId);
+              const rosterParsed = rosterJson ? JSON.parse(rosterJson) : [];
+              await createSeason(id, seasonName || `Season ${id}`, rosterParsed);
+              const newRoster = await getRoster();
+              onRosterUpdate(newRoster);
+              return "Season created (or call succeeded).";
+            })
+          }
+        >
+          Create Season
+        </button>
+        <button
+          className="btn btn-secondary"
+          onClick={() =>
+            withMessage(async () => {
+              await setActiveSeason(Number(seasonId));
+              return "Set active season.";
+            })
+          }
+        >
+          Set Active
+        </button>
+        <button
+          className="btn btn-secondary"
+          onClick={() =>
+            withMessage(async () => {
+              await finishEditingSeason(Number(seasonId));
+              return "Finished editing season.";
+            })
+          }
+        >
+          Finish Editing
+        </button>
+      </div>
+
+      <div style={{ marginBottom: 8 }}>
+        <label>Unit JSON (single UnitDef)</label>
+        <textarea
+          value={unitJson}
+          onChange={(e) => setUnitJson(e.target.value)}
+          rows={3}
+          style={{ width: "100%" }}
+        />
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          className="btn btn-primary"
+          onClick={() =>
+            withMessage(async () => {
+              const unit = unitJson ? JSON.parse(unitJson) : null;
+              if (!unit) throw new Error("Unit JSON required");
+              await addUnitToSeason(Number(seasonId), unit);
+              const newRoster = await getRoster();
+              onRosterUpdate(newRoster);
+              return "Unit added to season.";
+            })
+          }
+        >
+          Add Unit
+        </button>
+      </div>
+
+      {message && <p style={{ marginTop: 8 }}>{message}</p>}
     </div>
-  )
+  );
 }
